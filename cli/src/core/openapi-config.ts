@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { getAuthDir } from "./token-store.js";
 
 export interface OpenApiCredential {
   api_key: string;
@@ -26,8 +27,9 @@ export interface OpenApiConfig {
   default_slippage_type?: number;
 }
 
-const CONFIG_DIR = join(homedir(), ".gate-wallet");
-const CONFIG_FILE = join(CONFIG_DIR, "openapi.json");
+function getConfigFile(): string {
+  return join(getAuthDir(), "openapi.json");
+}
 
 const DEX_CONFIG_DIR = join(homedir(), ".gate-dex-openapi");
 const DEX_CONFIG_FILE = join(DEX_CONFIG_DIR, "config.json");
@@ -60,9 +62,10 @@ export function loadOpenApiConfig(): OpenApiConfig | null {
     }
   }
   // Fallback to legacy dual-channel config
-  if (!existsSync(CONFIG_FILE)) return null;
+  const configFile = getConfigFile();
+  if (!existsSync(configFile)) return null;
   try {
-    const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
+    const raw = JSON.parse(readFileSync(configFile, "utf-8"));
     if (!raw?.trade?.api_key || !raw?.query?.api_key) return null;
     return raw as OpenApiConfig;
   } catch {
@@ -74,10 +77,11 @@ export function loadOpenApiConfig(): OpenApiConfig | null {
  * 保存 OpenAPI 配置到磁盘
  */
 export function saveOpenApiConfig(config: OpenApiConfig): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  const configFile = getConfigFile();
+  mkdirSync(getAuthDir(), { recursive: true });
+  writeFileSync(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
   try {
-    chmodSync(CONFIG_FILE, 0o600);
+    chmodSync(configFile, 0o600);
   } catch {
     // ignore
   }
@@ -94,7 +98,7 @@ export function hasOpenApiConfig(): boolean {
  * 获取配置文件路径
  */
 export function getOpenApiConfigPath(): string {
-  return CONFIG_FILE;
+  return getConfigFile();
 }
 
 /**

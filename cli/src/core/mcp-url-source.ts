@@ -4,9 +4,9 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MCP_SERVER_URL, getServerUrl } from "./mcp-client.js";
+import { getAuthDir } from "./token-store.js";
 
 /** cli 包根（与 index 中 PKG_ROOT 一致），用于推断「相对安装位置」的 .env */
 function getCliPackageRoot(): string {
@@ -74,7 +74,7 @@ export function getMcpUrlProvenance(): McpUrlProvenance {
     };
   }
 
-  const userEnv = join(homedir(), ".gate-wallet", ".env");
+  const userEnv = join(getAuthDir(), ".env");
   const fromWalk = nearestEnvFileDeclaringMcpUrl();
   if (fromWalk) {
     const rel =

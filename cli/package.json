@@ -1,7 +1,7 @@
 {
   "name": "gate-wallet-cli",
   "version": "1.0.6",
-  "description": "Gate Wallet CLI - MCP Custodial Wallet Management Tool",
+  "description": "Gate Wallet CLI - Custodial Wallet Management Tool",
   "type": "module",
   "main": "dist/cli/index.js",
   "bin": {
@@ -15,7 +15,7 @@
     "cli": "tsx src/cli/index.ts",
     "build": "tsc && chmod +x bin/gate-wallet.js",
     "dev": "tsx --watch src/cli/index.ts",
-    "test:mcp": "MCP_URL=https://wallet-service-mcp-test.gateweb3.cc/mcp tsx src/test/mcp-tools.test.ts",
+
     "prepublishOnly": "cp ../README.md ./README.md && npm run build",
     "preuninstall": "node ./bin/uninstall.cjs"
   },
@@ -23,7 +23,6 @@
     "gate",
     "wallet",
     "cli",
-    "mcp",
     "web3"
   ],
   "author": "Gate",
@@ -39,7 +38,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@noble/curves": "^2.2.0",
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
     "open": "^11.0.0",

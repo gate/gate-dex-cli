@@ -34,24 +34,48 @@ export interface StoredAuth {
   mcp_token: string;
   provider: "gate" | "google";
   user_id?: string | undefined;
+  /** BW account_id（poll 响应下发，用于 gateway 操作） */
+  account_id?: string | undefined;
+  /** BW EVM 钱包地址（poll 响应下发，避免调 getAddresses） */
+  evm_address?: string | undefined;
+  /** BW SOL 钱包地址（poll 响应下发） */
+  sol_address?: string | undefined;
   expires_at?: number | undefined;
   env: string;
-  server_url: string;
+  server_url?: string;
 }
 
-const AUTH_DIR = join(homedir(), ".gate-wallet");
-const AUTH_FILE = join(AUTH_DIR, "auth.json");
-const DEVICE_FILE = join(AUTH_DIR, "device.json");
+export function getBwAccessToken(auth: StoredAuth): string {
+  return auth.mcp_token;
+}
+
+/**
+ * 返回 auth 存储目录。
+ * 优先级：--auth-dir CLI 选项（通过 GATE_WALLET_HOME env）> ~/.gate-wallet
+ */
+export function getAuthDir(): string {
+  return process.env["GATE_WALLET_HOME"] ?? join(homedir(), ".gate-wallet");
+}
+
+function getAuthFile(): string {
+  return join(getAuthDir(), "auth.json");
+}
+
+function getDeviceFile(): string {
+  return join(getAuthDir(), "device.json");
+}
 
 export function saveAuth(auth: StoredAuth): void {
-  mkdirSync(AUTH_DIR, { recursive: true });
-  writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 });
+  const dir = getAuthDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(getAuthFile(), JSON.stringify(auth, null, 2), { mode: 0o600 });
 }
 
 export function loadAuth(env?: string): StoredAuth | null {
   try {
-    if (!existsSync(AUTH_FILE)) return null;
-    const data = JSON.parse(readFileSync(AUTH_FILE, "utf-8")) as StoredAuth;
+    const file = getAuthFile();
+    if (!existsSync(file)) return null;
+    const data = JSON.parse(readFileSync(file, "utf-8")) as StoredAuth;
 
     if (data.expires_at && Date.now() >= data.expires_at) {
       clearAuth();
@@ -70,14 +94,14 @@ export function loadAuth(env?: string): StoredAuth | null {
 
 export function clearAuth(): void {
   try {
-    unlinkSync(AUTH_FILE);
+    unlinkSync(getAuthFile());
   } catch {
     // ignore
   }
 }
 
 export function getAuthFilePath(): string {
-  return AUTH_FILE;
+  return getAuthFile();
 }
 
 /**
@@ -85,9 +109,10 @@ export function getAuthFilePath(): string {
  * 用于 GV API 的 x-gtweb3-device-token 请求头
  */
 export function getOrCreateDeviceToken(): string {
+  const deviceFile = getDeviceFile();
   try {
-    if (existsSync(DEVICE_FILE)) {
-      const data = JSON.parse(readFileSync(DEVICE_FILE, "utf-8")) as {
+    if (existsSync(deviceFile)) {
+      const data = JSON.parse(readFileSync(deviceFile, "utf-8")) as {
         device_token?: string;
       };
       if (data.device_token) return data.device_token;
@@ -95,10 +120,10 @@ export function getOrCreateDeviceToken(): string {
   } catch {
     // 读取失败则重新生成
   }
-  mkdirSync(AUTH_DIR, { recursive: true });
+  mkdirSync(getAuthDir(), { recursive: true });
   const token = randomBytes(20).toString("hex"); // 40 位 hex 字符串
   writeFileSync(
-    DEVICE_FILE,
+    deviceFile,
     JSON.stringify({ device_token: token }, null, 2),
     { mode: 0o600 },
   );

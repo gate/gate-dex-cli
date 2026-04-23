@@ -16,20 +16,11 @@ const GV_URL_TEST = "https://test-api.web3gate.io/api/plug/v1/web3-gv-api";
 const GV_URL_PRE = "https://pre-api.web3gate.io/api/plug/v1/web3-gv-api";
 const GV_URL_PROD = "https://api.web3gate.io/api/plug/v1/web3-gv-api";
 
-/**
- * 根据 MCP_URL 推断对应的 GV API base URL
- */
-export function getGvBaseUrl(mcpUrl: string): string {
-  if (mcpUrl.includes("-pre.") || mcpUrl.includes("pre-")) {
-    return GV_URL_PRE;
-  }
-  if (
-    mcpUrl.includes("-test.") ||
-    mcpUrl.includes("test-") ||
-    mcpUrl.includes("localhost")
-  ) {
-    return GV_URL_TEST;
-  }
+/** 根据 RUN_ENV 返回对应的 GV API base URL */
+export function getGvBaseUrl(): string {
+  const env = (process.env["RUN_ENV"] ?? "").toLowerCase();
+  if (env === "pre" || env === "pre-production") return GV_URL_PRE;
+  if (env === "dev" || env === "development") return GV_URL_TEST;
   return GV_URL_PROD;
 }
 
@@ -37,9 +28,13 @@ export function getGvBaseUrl(mcpUrl: string): string {
 
 export interface GvCheckinParams {
   wallet_address: string;
-  /** 前端组装交易时传 message（string）；后端组装时传 intent（object，二选一） */
+  /** 前端组装交易时传 message（TxBundle JSON string）；后端组装时传 intent（object，二选一） */
   message?: string;
   intent?: Record<string, unknown>;
+  /** 链名称，如 arb / eth / sol */
+  chain?: string;
+  /** 链分类，如 ethereum / solana */
+  chain_category?: string;
   /** 交易类型，可选 */
   type?: string;
   /** 实际业务接口路径，如 /wallet/transfer */
@@ -49,6 +44,17 @@ export interface GvCheckinParams {
    * aiAgent/business 用于 MCP 相关业务
    */
   source?: number;
+}
+
+/** 构建 swap/transfer 的 GV checkin message（TxBundle JSON） */
+export function buildTxCheckinMessage(txHex: string, chainCategory: string): string {
+  return JSON.stringify({
+    tx: txHex,
+    category: chainCategory,
+    enc: "",
+    network: { chainId: 0 },
+    type: "",
+  });
 }
 
 export interface GvCheckinResult {
@@ -129,7 +135,6 @@ export class GvClient {
     return {
       "Content-Type": "application/json",
       Accept: "application/json, text/plain, */*",
-      source: "3",
       "x-gtweb3-device-token": this.deviceToken,
       Authorization: `Bearer ${this.mcpToken}`,
       "api-sign": sig["api-sign"],

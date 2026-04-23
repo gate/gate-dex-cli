@@ -1,6 +1,6 @@
 # Gate Wallet CLI
 
-A command-line interface for [Gate](https://gate.com) Web3 wallet. Supports MCP and OpenAPI dual channels — balance queries, transfers, Swap, market data, and token analytics. Designed for developers, quants, and AI agents.
+A command-line interface for [Gate](https://gate.com) Web3 wallet. Supports REST API and OpenAPI dual channels — balance queries, transfers, Swap, market data, and token analytics. Designed for developers, quants, and AI agents.
 
 ## Quick Start
 
@@ -9,9 +9,9 @@ A command-line interface for [Gate](https://gate.com) Web3 wallet. Supports MCP 
 
 ## Features
 
-- **Dual Channel** — MCP (OAuth + custodial signing) and OpenAPI (AK/SK + self-custody signing)
-- **Hybrid Swap** — OpenAPI quotes/builds + MCP signs, no private key needed
-- **Multi-chain** — EVM chains (Ethereum, BSC, Arbitrum, Base, Polygon, etc.) and Solana
+- **Dual Channel** — REST API (OAuth + custodial signing) and OpenAPI (AK/SK + self-custody signing)
+- **Hybrid Swap** — OpenAPI quotes/builds + REST API signing, no private key needed
+- **Multi-chain** — EVM chains (Ethereum, BSC, Arbitrum, Base, Polygon, etc.), Solana, Tron, Sui, TON
 - **Wallet** — balance, addresses, tokens, one-click transfers (preview→sign→broadcast)
 - **Swap** — full lifecycle: quote → build → sign → submit → status tracking
 - **Market data** — K-line, liquidity, trade volume, token rankings, security audits
@@ -46,12 +46,13 @@ pnpm cli login
 ## Configuration
 
 ```bash
-# MCP channel: OAuth login (token saved to ~/.gate-wallet/auth.json, 30-day expiry)
+# REST API channel: OAuth login (token saved to ~/.gate-wallet/auth.json, 30-day expiry)
 gate-wallet login              # Gate OAuth
 gate-wallet login --google     # Google OAuth
 
-# OpenAPI channel: AK/SK config
+# OpenAPI channel: AK/SK config (Trade + Query channels)
 gate-wallet openapi-config --set-ak YOUR_AK --set-sk YOUR_SK
+gate-wallet openapi-config --set-query-ak YOUR_AK --set-query-sk YOUR_SK
 ```
 
 Or configure manually:
@@ -59,7 +60,7 @@ Or configure manually:
 | Path                              | Purpose                      |
 | --------------------------------- | ---------------------------- |
 | `~/.gate-wallet/auth.json`        | OAuth token (auto-generated) |
-| `~/.gate-dex-openapi/config.json` | OpenAPI AK/SK credentials    |
+| `~/.gate-wallet/openapi.json`     | OpenAPI AK/SK credentials    |
 
 Create your AK/SK at [Gate Web3 API Management](https://web3.gate.com/zh/api-manage).
 
@@ -68,7 +69,6 @@ Create your AK/SK at [Gate Web3 API Management](https://web3.gate.com/zh/api-man
 ```bash
 # Auth
 gate-wallet login
-gate-wallet status
 gate-wallet logout
 
 # Wallet queries
@@ -81,11 +81,11 @@ gate-wallet send --chain ETH --to 0x... --amount 0.0001
 gate-wallet send --chain SOL --to <address> --amount 0.001
 gate-wallet send --chain ETH --to 0x... --amount 1 --token 0xdAC17F...   # ERC20
 
-# MCP Swap
+# Swap
 gate-wallet swap --from-chain 1 --from - --to 0xdAC17F... --amount 0.01 --native-in 1
 gate-wallet swap-detail <order_id>
 
-# Hybrid Swap (OpenAPI + MCP signing)
+# Hybrid Swap (OpenAPI + REST signing)
 gate-wallet openapi-swap --chain ARB --from - --to 0xFd08... --amount 0.00001
 
 # Market data
@@ -104,8 +104,8 @@ gate-wallet
 | Command            | Description                  |
 | ------------------ | ---------------------------- |
 | `login [--google]` | OAuth login (Gate or Google) |
-| `status`           | Auth status & token expiry   |
 | `logout`           | Clear token                  |
+| `web3-domain`      | View/refresh web3 domain list |
 | `balance`          | Total asset balance          |
 | `address`          | Wallet addresses (EVM/SOL)   |
 | `tokens`           | Token list with balances     |
@@ -117,13 +117,14 @@ gate-wallet
 | `send --chain <c> --to <addr> --amount <n>`               | One-click transfer (preview→sign→broadcast) |
 | `gas [chain]`                                             | Gas fees                                    |
 | `transfer --chain <c> --to <addr> --amount <n>`           | Transfer preview only                       |
-| `sign-msg <32-hex>`                                       | Sign message                                |
-| `sign-tx <raw_tx>`                                        | Sign raw transaction                        |
+| `sign-msg <message>`                                      | Sign message                                |
+| `sign-tx <raw_tx>`                                        | Sign raw transaction (with GV safety check) |
 | `send-tx --chain <c> --hex <tx> --to <addr> --amount <n>` | Broadcast signed tx                         |
+| `sol-tx --chain SOL --to <addr> --amount <n>`             | Build Solana unsigned transfer tx           |
 | `tx-detail <tx_hash>`                                     | Transaction details                         |
 | `tx-history [--limit N]`                                  | Transaction history                         |
 
-### Swap (MCP)
+### Swap
 
 | Command                                                          | Description              |
 | ---------------------------------------------------------------- | ------------------------ |
@@ -136,7 +137,7 @@ gate-wallet
 
 | Command                                                                            | Description                         |
 | ---------------------------------------------------------------------------------- | ----------------------------------- |
-| `openapi-swap --chain <c> --from <addr> --to <addr> --amount <n>`                  | Hybrid swap (OpenAPI + MCP signing) |
+| `openapi-swap --chain <c> --from <addr> --to <addr> --amount <n>`                  | Hybrid swap (OpenAPI + REST signing) |
 | `openapi-chains`                                                                   | Supported chains                    |
 | `openapi-gas --chain <c>`                                                          | Gas prices                          |
 | `openapi-quote --chain <c> --from <addr> --to <addr> --amount <n> --wallet <addr>` | Get quote                           |
@@ -158,7 +159,7 @@ gate-wallet
 | `openapi-volume --chain <c> --address <addr>`                               | Trade volume (5m/1h/4h/24h) |
 | `openapi-liquidity --chain <c> --address <addr>`                            | Liquidity pool events       |
 
-### Market & Token (MCP)
+### Market & Token
 
 | Command                                          | Description                      |
 | ------------------------------------------------ | -------------------------------- |
@@ -174,14 +175,13 @@ gate-wallet
 
 ### Chain & Advanced
 
-| Command                        | Description             |
-| ------------------------------ | ----------------------- |
-| `chain-config [chain]`         | Chain configuration     |
-| `rpc --chain <c> --method <m>` | JSON-RPC call           |
-| `openapi-config`               | View/set AK/SK config   |
-| `tools`                        | List all MCP tools      |
-| `call <tool> [json]`           | Call MCP tool directly  |
-| `openapi-call <action> [json]` | Call any OpenAPI action |
+| Command                        | Description                |
+| ------------------------------ | -------------------------- |
+| `chain-config [chain]`         | Chain configuration        |
+| `rpc --chain <c> --method <m>` | JSON-RPC call              |
+| `openapi-config`               | View/set AK/SK config      |
+| `openapi-call <action> [json]` | Call any OpenAPI action    |
+| `cleanup`                      | Remove local config files  |
 
 ## Swap parameters
 
@@ -211,9 +211,13 @@ gate-wallet
 | Fantom    | 250      | FTM       |
 | Cronos    | 25       | cronos    |
 | Linea     | 59144    | linea     |
+| Scroll    | 534352   | scroll    |
 | zkSync    | 324      | zksync    |
 | Mantle    | 5000     | mantle    |
 | GateLayer | 10088    | gatelayer |
+| Tron      | 195      | TRX       |
+| Sui       | 101      | sui       |
+| TON       | 607      | ton       |
 
 ## Documentation
 
@@ -226,8 +230,8 @@ gate-wallet
 
 - **Runtime**: Node.js >= 18 + TypeScript
 - **CLI**: Commander.js
-- **MCP**: `@modelcontextprotocol/sdk` (custodial signing)
 - **Auth**: Google / Gate OAuth 2.0
+- **REST API**: Direct HTTP calls to Gate wallet services
 - **OpenAPI**: HMAC-SHA256 signing, Trade / Query dual channels
 
 ## AI Agent integration

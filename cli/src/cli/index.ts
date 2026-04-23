@@ -7,8 +7,9 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { registerAuthCommands, registerShortcutCommands } from "./auth.cmd.js";
 import { registerOpenApiCommands } from "./openapi.cmd.js";
-import { getMcpClientSync, getServerUrl } from "../core/mcp-client.js";
+import { getServerUrl } from "../core/mcp-client.js";
 import { registerShellEnvSnapshot } from "../core/mcp-url-source.js";
+import { getAuthDir } from "../core/token-store.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = join(__dirname, "..", "..");
@@ -64,8 +65,18 @@ function loadEnvWalkingUpFromCwd(): void {
   }
 }
 
+// 提前从 argv 提取 --auth-dir，使后续所有 loadAuth/saveAuth 都使用自定义路径
+(function applyAuthDirFromArgv() {
+  const args = process.argv.slice(2);
+  const idx = args.findIndex((a) => a === "--auth-dir");
+  const authDirArg = args[idx + 1];
+  if (idx !== -1 && authDirArg) {
+    process.env["GATE_WALLET_HOME"] = resolve(authDirArg);
+  }
+})();
+
 // 1) ~/.gate-wallet/.env（用户级默认，不覆盖已有 shell 变量）
-loadEnvFile(join(homedir(), ".gate-wallet", ".env"), "fill");
+loadEnvFile(join(getAuthDir(), ".env"), "fill");
 // 2) 相对「安装包」的上一级 .env（pnpm cli / 本地源码时往往是仓库根；全局安装时通常不存在）
 loadEnvFile(join(PKG_ROOT, "..", ".env"), "overrideNonShell");
 // 3) 自 cwd 向上的每一级 .env（全局 gate-wallet 在项目目录里执行时与 pnpm cli 行为一致）
@@ -76,7 +87,8 @@ const program = new Command();
 program
   .name("gate-wallet")
   .description("Gate Wallet CLI - MCP Custodial Wallet")
-  .version(pkg.version, "-v, --version");
+  .version(pkg.version, "-v, --version")
+  .option("--auth-dir <path>", "Custom auth storage directory (overrides ~/.gate-wallet, also via GATE_WALLET_HOME env)");
 
 registerAuthCommands(program);
 registerShortcutCommands(program);
@@ -84,10 +96,10 @@ registerOpenApiCommands(program);
 
 program
   .command("cleanup")
-  .description("清理本地配置文件 (~/.gate-wallet, ~/.gate-dex-openapi)")
+  .description("清理本地配置文件 (auth-dir, ~/.gate-dex-openapi)")
   .action(() => {
     const dirs = [
-      join(homedir(), ".gate-wallet"),
+      getAuthDir(),
       join(homedir(), ".gate-dex-openapi"),
     ];
     for (const dir of dirs) {
@@ -115,9 +127,7 @@ const hasSubcommand = operands.length > 0;
 if (hasSubcommand) {
   program
     .parseAsync()
-    .then(async () => {
-      const mcp = getMcpClientSync();
-      if (mcp) await mcp.disconnect();
+    .then(() => {
       process.exit(0);
     })
     .catch(() => {
@@ -157,8 +167,6 @@ if (hasSubcommand) {
     }
 
     if (input === "exit" || input === "quit") {
-      const mcp = getMcpClientSync();
-      if (mcp) await mcp.disconnect();
       console.log(chalk.gray("Bye!"));
       process.exit(0);
     }
@@ -181,9 +189,7 @@ if (hasSubcommand) {
     rl.prompt();
   });
 
-  rl.on("close", async () => {
-    const mcp = getMcpClientSync();
-    if (mcp) await mcp.disconnect();
+  rl.on("close", () => {
     process.exit(0);
   });
 }

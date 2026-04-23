@@ -20,8 +20,9 @@ import {
   getOpenApiConfigPath,
   saveOpenApiConfig,
 } from "../core/openapi-config.js";
-import { getMcpClient } from "../core/mcp-client.js";
-import { loadAuth } from "../core/token-store.js";
+import { loadAuth, getBwAccessToken } from "../core/token-store.js";
+import { createBwApiClient } from "../core/api-client.js";
+import { createGatewayApiClient, gatewayRpcCall, gatewayTransDetail } from "../core/gateway-client.js";
 
 /** chain 名称 → chain_id 映射 */
 const CHAIN_ID_MAP: Record<string, number> = {
@@ -772,29 +773,20 @@ export function registerOpenApiCommands(program: Command) {
 
       const slippage = parseFloat(opts.slippage);
 
-      // Step 0: Get wallet address via MCP
-      const authSpinner = ora("连接 MCP 获取钱包地址...").start();
-      let mcp;
+      // Step 0: Get wallet address from cached auth
+      const authSpinner = ora("获取钱包地址...").start();
       try {
-        mcp = await getMcpClient();
         const stored = loadAuth();
-        if (!stored) {
+        if (!stored?.user_id) {
           authSpinner.fail("未登录，请先执行 login");
           return;
         }
-        mcp.setMcpToken(stored.mcp_token);
 
-        const addrResult = await mcp.callTool("dex_wallet_get_addresses", {});
-        const addrData = extractMcpJson<{ addresses?: Record<string, string> }>(
-          addrResult as Record<string, unknown>,
-        );
         const isSolanaChain = resolveChainId(opts.chain) === 501;
-        const wallet = isSolanaChain
-          ? addrData?.addresses?.SOL
-          : addrData?.addresses?.EVM;
+        const wallet = isSolanaChain ? stored.sol_address : stored.evm_address;
         if (!wallet) {
           authSpinner.fail(
-            `无法获取 ${isSolanaChain ? "SOL" : "EVM"} 钱包地址`,
+            `无法获取 ${isSolanaChain ? "SOL" : "EVM"} 钱包地址，请重新登录`,
           );
           return;
         }
@@ -921,31 +913,24 @@ export function registerOpenApiCommands(program: Command) {
           const solOrderId = solBuildRes.data.order_id;
           const unsignedTxBase64 = solUtx.data;
 
-          // Solana Step 3: Sign via MCP wallet.sign_transaction
-          // MCP expects base58-encoded VersionedTransaction for SOL
+          // Solana Step 3: Sign via REST API
           execSpinner.text = "签名 Solana 交易...";
           const unsignedTxBase58 = base58Encode(
             Buffer.from(unsignedTxBase64, "base64"),
           );
 
-          const solSignRaw = await mcp.callTool("dex_wallet_sign_transaction", {
+          const solBwClient = await createBwApiClient(getBwAccessToken(stored));
+          const solSignResult = await solBwClient.signTransaction({
+            rawTx: unsignedTxBase58,
             chain: "SOL",
-            raw_tx: unsignedTxBase58,
+            checkinToken: "",
           });
-          const solSignResult = extractMcpJson<{
-            signedTransaction?: string;
-            signature?: string;
-          }>(solSignRaw as Record<string, unknown>);
 
           // signedTransaction is base58-encoded signed VersionedTransaction
           const signedSolTx = solSignResult?.signedTransaction ?? "";
 
           if (!signedSolTx) {
             execSpinner.fail("Solana 签名失败");
-            console.log(
-              chalk.gray("Raw:"),
-              JSON.stringify(solSignRaw, null, 2).slice(0, 800),
-            );
             return;
           }
           execSpinner.succeed("签名成功");
@@ -979,7 +964,6 @@ export function registerOpenApiCommands(program: Command) {
             solOrderId,
             solTxHash,
             solQ.to_token,
-            mcp,
             chainParam,
           );
         } else {
@@ -1017,13 +1001,7 @@ export function registerOpenApiCommands(program: Command) {
                 .padStart(64, "0");
               const allowanceData = `0xdd62ed3e${ownerPadded}${spenderPadded}`;
 
-              const allowanceResult = extractMcpJson<{ result: string }>(
-                (await mcp.callTool("dex_rpc_call", {
-                  chain: chainParam,
-                  method: "eth_call",
-                  params: [{ to: opts.from, data: allowanceData }, "latest"],
-                })) as Record<string, unknown>,
-              );
+              const allowanceResult = await innerRpc<{ result: string }>(chainParam, "eth_call", [{ to: opts.from, data: allowanceData }, "latest"]);
               const allowanceRaw = BigInt(allowanceResult?.result ?? "0x0");
               const amountRaw = BigInt(
                 Math.floor(
@@ -1035,42 +1013,15 @@ export function registerOpenApiCommands(program: Command) {
                 execSpinner.text = "授权不足，签名 approve 交易...";
 
                 // Get nonce + gas for approve tx
-                const approveNonceResult = extractMcpJson<{ result: string }>(
-                  (await mcp.callTool("dex_rpc_call", {
-                    chain: chainParam,
-                    method: "eth_getTransactionCount",
-                    params: [wallet, "pending"],
-                  })) as Record<string, unknown>,
-                );
+                const approveNonceResult = await innerRpc<{ result: string }>(chainParam, "eth_getTransactionCount", [wallet, "pending"]);
                 const approveNonce = parseInt(approveNonceResult!.result, 16);
 
-                const approveGasPriceResult = extractMcpJson<{
-                  result: string;
-                }>(
-                  (await mcp.callTool("dex_rpc_call", {
-                    chain: chainParam,
-                    method: "eth_gasPrice",
-                    params: [],
-                  })) as Record<string, unknown>,
-                );
-                const approveGasPrice = Math.floor(
-                  parseInt(approveGasPriceResult!.result, 16) * 1.2,
-                );
+                const approveGasPriceResult = await innerRpc<{ result: string }>(chainParam, "eth_gasPrice", []);
+                const approveGasPrice = Math.floor(parseInt(approveGasPriceResult!.result, 16) * 1.2);
 
-                const approvePriorityFeeResult = extractMcpJson<{
-                  result: string;
-                }>(
-                  (await mcp.callTool("dex_rpc_call", {
-                    chain: chainParam,
-                    method: "eth_maxPriorityFeePerGas",
-                    params: [],
-                  })) as Record<string, unknown>,
-                );
+                const approvePriorityFeeResult = await innerRpc<{ result: string }>(chainParam, "eth_maxPriorityFeePerGas", []);
                 const approvePriorityFee = Math.max(
-                  Math.floor(
-                    parseInt(approvePriorityFeeResult?.result ?? "0x1", 16) *
-                      1.2,
-                  ),
+                  Math.floor(parseInt(approvePriorityFeeResult?.result ?? "0x1", 16) * 1.2),
                   1,
                 );
 
@@ -1087,30 +1038,19 @@ export function registerOpenApiCommands(program: Command) {
                     data: approveTx.data,
                   });
 
-                const approveSignResult = extractMcpJson<{
-                  signedTransaction: string;
-                }>(
-                  (await mcp.callTool("dex_wallet_sign_transaction", {
-                    chain: "EVM",
-                    raw_tx: rawApproveTx,
-                  })) as Record<string, unknown>,
-                );
+                const approveBwClient = await createBwApiClient(getBwAccessToken(stored));
+                const approveSignResult = await approveBwClient.signTransaction({
+                  rawTx: rawApproveTx,
+                  chain: "EVM",
+                  checkinToken: "",
+                });
                 let signedApproveTx = approveSignResult!.signedTransaction;
                 if (!signedApproveTx.startsWith("0x"))
                   signedApproveTx = "0x" + signedApproveTx;
 
                 // Broadcast approve tx via RPC and wait for on-chain confirmation
                 execSpinner.text = "广播 approve 交易，等待链上确认...";
-                const sendApproveResult = extractMcpJson<{
-                  result?: string;
-                  error?: unknown;
-                }>(
-                  (await mcp.callTool("dex_rpc_call", {
-                    chain: chainParam,
-                    method: "eth_sendRawTransaction",
-                    params: [signedApproveTx],
-                  })) as Record<string, unknown>,
-                );
+                const sendApproveResult = await innerRpc<{ result?: string; error?: unknown }>(chainParam, "eth_sendRawTransaction", [signedApproveTx]);
                 const approveTxHash = sendApproveResult?.result;
                 if (!approveTxHash) {
                   execSpinner.fail(
@@ -1123,15 +1063,7 @@ export function registerOpenApiCommands(program: Command) {
                 let approveConfirmed = false;
                 for (let i = 0; i < 30; i++) {
                   await sleep(3000);
-                  const receiptResult = extractMcpJson<{
-                    result?: { status: string } | null;
-                  }>(
-                    (await mcp.callTool("dex_rpc_call", {
-                      chain: chainParam,
-                      method: "eth_getTransactionReceipt",
-                      params: [approveTxHash],
-                    })) as Record<string, unknown>,
-                  );
+                  const receiptResult = await innerRpc<{ result?: { status: string } | null }>(chainParam, "eth_getTransactionReceipt", [approveTxHash]);
                   if (receiptResult?.result?.status === "0x1") {
                     approveConfirmed = true;
                     break;
@@ -1219,33 +1151,13 @@ export function registerOpenApiCommands(program: Command) {
 
           // Step 5: Nonce + Gas for swap tx
           execSpinner.text = "获取 nonce + gasPrice...";
-          const nonceResult = extractMcpJson<{ result: string }>(
-            (await mcp.callTool("dex_rpc_call", {
-              chain: chainParam,
-              method: "eth_getTransactionCount",
-              params: [wallet, "pending"],
-            })) as Record<string, unknown>,
-          );
+          const nonceResult = await innerRpc<{ result: string }>(chainParam, "eth_getTransactionCount", [wallet, "pending"]);
           const nonce = parseInt(nonceResult!.result, 16);
 
-          const gasPriceResult = extractMcpJson<{ result: string }>(
-            (await mcp.callTool("dex_rpc_call", {
-              chain: chainParam,
-              method: "eth_gasPrice",
-              params: [],
-            })) as Record<string, unknown>,
-          );
-          const gasPrice = Math.floor(
-            parseInt(gasPriceResult!.result, 16) * 1.2,
-          );
+          const gasPriceResult = await innerRpc<{ result: string }>(chainParam, "eth_gasPrice", []);
+          const gasPrice = Math.floor(parseInt(gasPriceResult!.result, 16) * 1.2);
 
-          const priorityFeeResult = extractMcpJson<{ result: string }>(
-            (await mcp.callTool("dex_rpc_call", {
-              chain: chainParam,
-              method: "eth_maxPriorityFeePerGas",
-              params: [],
-            })) as Record<string, unknown>,
-          );
+          const priorityFeeResult = await innerRpc<{ result: string }>(chainParam, "eth_maxPriorityFeePerGas", []);
           const priorityFee = Math.max(
             Math.floor(parseInt(priorityFeeResult?.result ?? "0x1", 16) * 1.2),
             1,
@@ -1267,13 +1179,13 @@ export function registerOpenApiCommands(program: Command) {
               data: utx.data,
             });
 
-          // Step 7: MCP sign
-          const signResult = extractMcpJson<{ signedTransaction: string }>(
-            (await mcp.callTool("dex_wallet_sign_transaction", {
-              chain: "EVM",
-              raw_tx: rawTx,
-            })) as Record<string, unknown>,
-          );
+          // Step 7: Sign via REST API
+          const evmBwClient = await createBwApiClient(getBwAccessToken(stored));
+          const signResult = await evmBwClient.signTransaction({
+            rawTx,
+            chain: "EVM",
+            checkinToken: "",
+          });
           let signedTx = signResult!.signedTransaction;
           if (!signedTx.startsWith("0x")) signedTx = "0x" + signedTx;
 
@@ -1305,7 +1217,6 @@ export function registerOpenApiCommands(program: Command) {
             order_id,
             txHash,
             freshQ.to_token,
-            mcp,
             chainParam,
           );
         } // end EVM flow
@@ -1317,19 +1228,16 @@ export function registerOpenApiCommands(program: Command) {
 
 // ─── Hybrid Swap helpers ───────────────────────────────────
 
-function extractMcpJson<T>(result: Record<string, unknown>): T | null {
-  if ("content" in result && Array.isArray(result.content)) {
-    for (const item of result.content) {
-      if ((item as { type: string }).type === "text") {
-        try {
-          return JSON.parse((item as { text: string }).text) as T;
-        } catch {
-          /* skip */
-        }
-      }
-    }
-  }
-  return null;
+async function innerRpc<T>(
+  chain: string | undefined,
+  method: string,
+  params: unknown[],
+): Promise<T | null> {
+  if (!chain) return null;
+  const stored = loadAuth();
+  if (!stored) return null;
+  const gw = createGatewayApiClient(stored.mcp_token);
+  return (await gatewayRpcCall(gw, { chain, method, params })) as T;
 }
 
 function askConfirm(msg: string): Promise<boolean> {
@@ -1489,7 +1397,6 @@ async function pollSwapStatus(
   orderId: string,
   txHash: string,
   toToken: { token_symbol: string; decimal: number },
-  mcp?: Awaited<ReturnType<typeof getMcpClient>>,
   chainParam?: string,
 ): Promise<void> {
   const pollSpinner = ora("等待链上确认...").start();
@@ -1499,18 +1406,12 @@ async function pollSwapStatus(
   for (let i = 0; i < 24; i++) {
     await sleep(5000);
 
-    // EVM: check on-chain receipt directly via MCP RPC (faster than OpenAPI status)
-    if (!isSolana && mcp && chainParam) {
+    // EVM: check on-chain receipt directly via REST RPC
+    if (!isSolana && chainParam) {
       try {
-        const receiptResult = extractMcpJson<{
+        const receiptResult = await innerRpc<{
           result?: { status: string; gasUsed?: string } | null;
-        }>(
-          (await mcp.callTool("dex_rpc_call", {
-            chain: chainParam,
-            method: "eth_getTransactionReceipt",
-            params: [txHash],
-          })) as Record<string, unknown>,
-        );
+        }>(chainParam, "eth_getTransactionReceipt", [txHash]);
         if (receiptResult?.result?.status === "0x1") {
           pollSpinner.succeed(`Swap 成功! (链上已确认)`);
           finalStatus = "success";
@@ -1525,16 +1426,16 @@ async function pollSwapStatus(
       }
     }
 
-    // Solana: query tx detail via MCP (faster than OpenAPI status)
-    if (isSolana && mcp) {
+    // Solana: query tx detail via REST
+    if (isSolana) {
       try {
-        const rawDetail = (await mcp.callTool("dex_tx_detail", {
-          hash_id: txHash,
-        })) as Record<string, unknown>;
-        const detailResult = extractMcpJson<
+        const _stored = loadAuth();
+        const detailResult = (_stored
+          ? await gatewayTransDetail(createGatewayApiClient(_stored.mcp_token), txHash)
+          : null) as
           | { status?: string; state?: string; tx_status?: string }
           | Array<{ status?: string; state?: string; tx_status?: string }>
-        >(rawDetail);
+          | null;
         const detail = Array.isArray(detailResult) ? detailResult[0] : detailResult;
         const detailStatus = (
           detail?.status ??
