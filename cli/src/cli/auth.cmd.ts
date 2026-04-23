@@ -1,322 +1,231 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import {
-  getMcpClient,
-  getMcpClientSync,
-  getServerUrl,
-} from "../core/mcp-client.js";
-import type { GateMcpClient } from "../core/mcp-client.js";
 import { openBrowser } from "../core/oauth.js";
 import {
   saveAuth,
   loadAuth,
   clearAuth,
   getAuthFilePath,
+  getBwAccessToken,
   getOrCreateDeviceToken,
   buildUserAgent,
 } from "../core/token-store.js";
 import {
   GvClient,
   getGvBaseUrl,
-  type SwapCheckinPreviewFields,
 } from "../core/gv-client.js";
-import { getMcpUrlProvenance } from "../core/mcp-url-source.js";
+import {
+  createWalletApiClient,
+  createBwApiClient,
+  createMarketApiClient,
+  createDataApiClient,
+  createMarketTradeClient,
+  createSwapApiClient,
+  getBizWalletUrl,
+  getBwAppId,
+} from "../core/api-client.js";
+import {
+  buildTransferPreview,
+  buildSolUnsigned,
+} from "../core/transfer/index.js";
+import {
+  getWeb3DomainInfo,
+  refreshWeb3Domains,
+} from "../core/remote-config.js";
+import {
+  createGatewayApiClient,
+  gatewayChainConfig,
+  gatewayRpcCall,
+  gatewayTokenList,
+  gatewayEvmGasPrice,
+  gatewayEvmGasLimit,
+  gatewaySolGasPrice,
+  gatewaySolGasLimit,
+  gatewayTransList,
+  gatewayTransDetail,
+  gatewaySendRawTransaction,
+} from "../core/gateway-client.js";
+import {
+  swapPrepare,
+  swapCheckinPreview,
+  swapSignApprove,
+  swapSignSwap,
+  swapSubmit,
+} from "../core/swap/index.js";
 
 export function registerAuthCommands(program: Command) {
   program
     .command("login")
     .description("Login (opens browser)")
     .option("--google", "Use Google OAuth instead of Gate")
-    .action(async function (this: Command, opts: { google?: boolean }) {
-      const serverUrl = getServerUrl();
-
+    .option("--no-open", "Print authorization URL without opening browser")
+    .action(async function (this: Command, opts: { google?: boolean; open: boolean }) {
       const stored = loadAuth();
       if (stored) {
-        const connectSpinner = ora("Restoring previous session...").start();
-        try {
-          const mcp = await getMcpClient({ serverUrl });
-          mcp.setMcpToken(stored.mcp_token);
-          connectSpinner.succeed(
-            "Already logged in (session restored from disk)",
-          );
-          if (stored.user_id)
-            console.log(chalk.green(`  User ID: ${stored.user_id}`));
-          console.log(chalk.green(`  Provider: ${stored.provider}`));
-          console.log(
-            chalk.gray(`  Run ${chalk.white("logout")} to switch accounts.`),
-          );
-          return;
-        } catch {
-          connectSpinner.warn(
-            "Stored session invalid, starting fresh login...",
-          );
-          clearAuth();
-        }
+        console.log(
+          chalk.green("Already logged in (session restored from disk)"),
+        );
+        if (stored.user_id)
+          console.log(chalk.green(`  User ID: ${stored.user_id}`));
+        console.log(chalk.green(`  Provider: ${stored.provider}`));
+        console.log(
+          chalk.gray(`  Run ${chalk.white("logout")} to switch accounts.`),
+        );
+        return;
       }
 
       try {
-        const connectSpinner = ora("Connecting to MCP Server...").start();
-        const mcp = await getMcpClient({ serverUrl });
-        connectSpinner.succeed("MCP Server connected");
-
         if (opts.google) {
-          await loginGoogleViaRest(mcp, serverUrl);
+          await loginGoogleViaRest(!opts.open);
           return;
         }
-
-        await loginGateViaRest(mcp, serverUrl);
+        await loginGateViaRest(!opts.open);
       } catch (err) {
         console.error(chalk.red(`Error: ${(err as Error).message}`));
       }
     });
 
   program
+    .command("web3-domain")
+    .description("查看 / 刷新动态 web3_domain 列表（含测速）")
+    .option("--refresh", "忽略缓存，强制重新拉取")
+    .action(async function (this: Command, opts: { refresh?: boolean }) {
+      try {
+        const spinner = ora(opts.refresh ? "刷新动态域名..." : "解析动态域名...").start();
+        const info = opts.refresh
+          ? { all: await refreshWeb3Domains() }
+          : await getWeb3DomainInfo();
+        spinner.succeed("解析成功");
+        if ("primary" in info) {
+          console.log(chalk.bold("Primary:"), chalk.green(info.primary || "-"));
+          console.log(chalk.bold("Available:"), info.available.length);
+        }
+        console.log(chalk.bold("All:"));
+        for (const d of info.all) {
+          const mark =
+            d.available === false
+              ? chalk.red("✘")
+              : chalk.green(`${d.response_time_ms ?? "?"}ms`);
+          console.log(`  ${mark}  ${d.host}`);
+        }
+        if ("cache_path" in info) {
+          console.log(chalk.gray(`\nCache: ${info.cache_path}`));
+        }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+
+  program
     .command("status")
-    .description("Show connection and auth status")
-    .action(async function (this: Command) {
-      const mcp = getMcpClientSync();
-      const stored = loadAuth();
-
-      const prov = getMcpUrlProvenance();
-      console.log(chalk.bold("MCP_URL"));
-      console.log(`  ${prov.url}`);
-      console.log(
-        chalk.gray(`  来源: ${prov.source} — ${prov.detail}`),
-      );
-      console.log();
-
-      if (mcp?.isAuthenticated()) {
-        console.log(chalk.green("MCP: connected & authenticated"));
+    .description("检查登录状态")
+    .action(() => {
+      const auth = loadAuth();
+      if (!auth) {
+        console.log(chalk.red("未登录"));
+        console.log(chalk.gray("  Run 'login' to sign in."));
         return;
       }
-
-      if (stored) {
-        console.log(chalk.green("Auth: token found on disk"));
-        console.log(`  Provider: ${stored.provider}`);
-        if (stored.user_id) console.log(`  User ID: ${stored.user_id}`);
-        if (stored.expires_at) {
-          const remaining = Math.max(0, stored.expires_at - Date.now());
-          const days = Math.floor(remaining / 86_400_000);
-          console.log(`  Expires in: ${days} days`);
-        }
-        console.log(chalk.gray(`  File: ${getAuthFilePath()}`));
-      } else {
-        console.log(chalk.yellow("Not logged in."));
-        console.log(
-          chalk.gray(
-            `  Run ${chalk.white("login")} or ${chalk.white("login --google")} to get started.`,
-          ),
-        );
+      const expired = auth.expires_at && auth.expires_at < Date.now();
+      if (expired) {
+        console.log(chalk.yellow("Token 已过期，请重新登录"));
+        console.log(chalk.gray("  Run 'login' to sign in again."));
+        return;
+      }
+      console.log(chalk.green("已登录"));
+      if (auth.user_id) console.log(chalk.green(`  User ID:     ${auth.user_id}`));
+      if (auth.account_id) console.log(chalk.green(`  Account ID:  ${auth.account_id}`));
+      console.log(chalk.green(`  Provider:    ${auth.provider}`));
+      if (auth.evm_address) console.log(chalk.green(`  EVM Address: ${auth.evm_address}`));
+      if (auth.sol_address) console.log(chalk.green(`  SOL Address: ${auth.sol_address}`));
+      if (auth.expires_at) {
+        const expiresDate = new Date(auth.expires_at).toLocaleString();
+        console.log(chalk.gray(`  Expires at:  ${expiresDate}`));
       }
     });
 
   program
     .command("logout")
-    .description("Logout and clear token")
+    .description("Logout and clear local token")
     .action(async () => {
-      const mcp = getMcpClientSync();
-      if (mcp?.isAuthenticated()) {
+      const auth = loadAuth();
+      if (auth) {
         try {
-          await mcp.authLogout();
-        } catch {
-          // best-effort server-side logout
+          const bwClient = await createBwApiClient(getBwAccessToken(auth));
+          await bwClient.logout();
+          console.log(chalk.gray("Server session cleared."));
+        } catch (err) {
+          console.log(chalk.yellow(`Server logout failed (local token will still be cleared): ${(err as Error).message}`));
         }
       }
       clearAuth();
       console.log(chalk.gray("Logged out. Token cleared."));
     });
 
-  program
-    .command("tools")
-    .description("List available MCP tools")
-    .action(async function (this: Command) {
-      const mcp = await getMcpClient();
-      const result = await mcp.listTools();
-      console.log(chalk.bold(`MCP Tools (${result.tools.length}):\n`));
-      for (const tool of result.tools) {
-        console.log(
-          `  ${chalk.cyan(tool.name.padEnd(40))} ${chalk.gray(tool.description ?? "")}`,
-        );
-      }
-    });
-
-  program
-    .command("call <tool> [json]")
-    .description("Call an MCP tool directly (for testing)")
-    .action(async function (
-      this: Command,
-      tool: string,
-      json: string | undefined,
-    ) {
-      try {
-        const mcp = await getMcpClient();
-
-        const args = json ? (JSON.parse(json) as Record<string, unknown>) : {};
-        const result = await mcp.callTool(tool, args);
-
-        if ("content" in result && Array.isArray(result.content)) {
-          for (const item of result.content) {
-            if (item.type === "text") {
-              try {
-                const parsed = JSON.parse(item.text);
-                console.log(JSON.stringify(parsed, null, 2));
-              } catch {
-                console.log(item.text);
-              }
-            }
-          }
-        } else {
-          console.log(JSON.stringify(result, null, 2));
-        }
-      } catch (err) {
-        console.error(chalk.red((err as Error).message));
-      }
-    });
 }
 
-/** 确保 MCP 已连接且已认证，返回 client */
-async function ensureAuthedMcp(): Promise<GateMcpClient> {
-  const mcp = await getMcpClient();
-  if (!mcp.isAuthenticated()) {
-    const stored = loadAuth();
-    if (stored) {
-      mcp.setMcpToken(stored.mcp_token);
-    } else {
-      throw new Error("Not logged in. Run: login");
-    }
-  }
-  return mcp;
-}
-
-/**
- * Swap 专用 GV Checkin：
- * 1. 调用 dex_tx_swap_checkin_preview 获取本阶段所需的 checkin 字段
- * 2. 用这些字段调用 GV /api/v1/tx/checkin 取得 checkin_token
- */
-async function performSwapGvCheckin(
-  mcp: GateMcpClient,
-  swapSessionId: string,
-  stage: "approve" | "swap",
-): Promise<string> {
-  // Step A: 获取 checkin 预览字段
-  const previewRaw = (await mcp.callTool("dex_tx_swap_checkin_preview", {
-    swap_session_id: swapSessionId,
-    stage,
-  })) as Record<string, unknown>;
-
-  const preview = extractToolJson<SwapCheckinPreviewFields>(previewRaw);
-  if (!preview?.user_wallet || !preview?.checkin_message) {
-    throw new Error(
-      `checkin_preview 返回字段不完整: ${JSON.stringify(preview)}`,
-    );
-  }
-
-  // Step B: 调用 GV checkin
-  const auth = loadAuth();
-  // checkin_preview 可能返回专属 mcp_token，优先使用
-  const mcpToken = preview.mcp_token ?? auth?.mcp_token ?? "";
-  const gvClient = new GvClient({
-    baseUrl: getGvBaseUrl(getServerUrl()),
-    mcpToken,
-    deviceToken: getOrCreateDeviceToken(),
-  });
-
-  const checkinResult = await gvClient.txCheckin({
-    wallet_address: preview.user_wallet,
-    message: preview.checkin_message,
-    module: `/wallet/swap/${stage}`,
-    source: 3,
-  });
-
-  return checkinResult.checkin_token;
-}
-
-/** 从 callTool 返回的 MCP content 中提取 JSON 对象 */
-function extractToolJson<T = Record<string, unknown>>(
-  result: Record<string, unknown>,
-): T {
-  if ("content" in result && Array.isArray(result.content)) {
-    for (const item of result.content) {
-      if ((item as { type: string }).type === "text") {
-        try {
-          return JSON.parse((item as { text: string }).text) as T;
-        } catch {
-          // not JSON
-        }
-      }
-    }
-  }
-  return result as T;
-}
-
-/** 格式化打印 MCP tool 返回结果 */
-function printToolResult(result: Record<string, unknown>) {
-  if ("content" in result && Array.isArray(result.content)) {
-    for (const item of result.content) {
-      if ((item as { type: string }).type === "text") {
-        try {
-          const parsed = JSON.parse((item as { text: string }).text);
-          console.log(JSON.stringify(parsed, null, 2));
-        } catch {
-          console.log((item as { text: string }).text);
-        }
-      }
-    }
-  } else {
-    console.log(JSON.stringify(result, null, 2));
-  }
-}
-
-/** 注册顶级快捷命令 — 覆盖所有 MCP tools */
 export function registerShortcutCommands(program: Command) {
-  /** 注册一个简单快捷命令的工厂函数 */
-  function shortcut(
-    name: string,
-    desc: string,
-    toolName: string,
-    buildArgs?: (
-      opts: Record<string, string | undefined>,
-      positional: string[],
-      mcp?: GateMcpClient,
-    ) => Record<string, unknown> | Promise<Record<string, unknown>>,
-    options?: Array<[flags: string, desc: string, defaultVal?: string]>,
-    positionalDef?: string,
-  ) {
-    const cmdDef = positionalDef ? `${name} ${positionalDef}` : name;
-    const cmd = program.command(cmdDef).description(desc);
-    if (options) {
-      for (const [f, d, dv] of options) {
-        if (dv !== undefined) cmd.option(f, d, dv);
-        else cmd.option(f, d);
-      }
+  // ─── Wallet ──────────────────────────────────────────────
+  program.command("balance").description("查询总资产余额").action(async () => {
+    try {
+      const auth = loadAuth();
+      if (!auth) throw new Error("Not logged in. Run: login");
+      if (!auth.user_id) throw new Error("user_id not found, please re-login");
+      const spinner = ora("查询总资产余额...").start();
+      const client = createWalletApiClient(auth.mcp_token);
+      const result = await client.getTotalAsset(auth.user_id);
+      spinner.succeed("查询成功");
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err) {
+      console.error(chalk.red((err as Error).message));
     }
-    cmd.action(async function (this: Command, ...actionArgs: unknown[]) {
+  });
+  program
+    .command("address")
+    .description("查询钱包地址")
+    .action(async () => {
       try {
-        const mcp = await ensureAuthedMcp();
-        let args: Record<string, unknown> = {};
-        if (buildArgs) {
-          const positional: string[] = [];
-          let opts: Record<string, string | undefined> = {};
-          for (const a of actionArgs) {
-            if (typeof a === "string") positional.push(a);
-            else if (a && typeof a === "object" && !(a instanceof Command))
-              opts = a as Record<string, string | undefined>;
-          }
-          args = await buildArgs(opts, positional, mcp);
-        }
-        const result = await mcp.callTool(toolName, args);
-        printToolResult(result as Record<string, unknown>);
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        console.log(JSON.stringify({
+          evm_address: auth.evm_address,
+          sol_address: auth.sol_address,
+        }, null, 2));
       } catch (err) {
         console.error(chalk.red((err as Error).message));
       }
     });
-  }
-
-  // ─── Wallet ──────────────────────────────────────────────
-  shortcut("balance", "查询总资产余额", "dex_wallet_get_total_asset");
-  shortcut("address", "查询钱包地址", "dex_wallet_get_addresses");
-  shortcut("tokens", "查询 token 列表和余额", "dex_wallet_get_token_list");
+  program
+    .command("tokens")
+    .description("查询 token 列表和余额（网关 /wallet/token-list）")
+    .option("--chain <keys>", "按 networkKey 过滤，逗号分隔，例如 ETH,SOL")
+    .option("--page <n>", "页码", "1")
+    .option("--size <n>", "每页条数", "20")
+    .option("--manage <0|1>", "isManageToken (0=展示 / 1=管理)", "0")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        if (!auth.user_id) throw new Error("user_id not found, please re-login");
+        const spinner = ora("查询 token 列表...").start();
+        const client = createGatewayApiClient(auth.mcp_token);
+        const networkKeyList = opts.chain
+          ? opts.chain.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
+          : [];
+        const result = await gatewayTokenList(client, {
+          accountID: auth.account_id ?? auth.user_id,
+          isManageToken: opts.manage ?? "0",
+          networkKeyList,
+          page: opts.page ? Number(opts.page) : 1,
+          pageSize: opts.size ? Number(opts.size) : 20,
+        });
+        spinner.succeed(`查询成功 (${result.coinArrValidate?.length ?? 0} 个 token)`);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
   program
     .command("sign-msg <message>")
     .description(
@@ -338,22 +247,15 @@ export function registerShortcutCommands(program: Command) {
           return;
         }
 
-        const mcp = await ensureAuthedMcp();
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        if (!auth.user_id) throw new Error("user_id not found, please re-login");
         const chain = (opts.chain ?? "ETH").toUpperCase();
 
-        // Step 1: 获取钱包地址
-        const addrData = extractToolJson<{
-          addresses?: Record<string, string>;
-        }>(
-          (await mcp.callTool("dex_wallet_get_addresses", {})) as Record<
-            string,
-            unknown
-          >,
-        );
-        const chainType = chain === "SOL" ? "SOL" : "EVM";
-        const walletAddress = addrData?.addresses?.[chainType] ?? "";
+        // Step 1: 获取钱包地址（直接用登录时缓存的地址）
+        const walletAddress = (chain === "SOL" ? auth.sol_address : auth.evm_address) ?? "";
         if (!walletAddress) {
-          console.error(chalk.red(`未找到 ${chainType} 钱包地址`));
+          console.error(chalk.red(`未找到钱包地址，请重新登录: pnpm cli login`));
           return;
         }
 
@@ -361,12 +263,9 @@ export function registerShortcutCommands(program: Command) {
         const gvSpinner = ora("GV 安全校验...").start();
         let gvCheckinToken: string | undefined;
         try {
-          const auth = loadAuth();
-          const mcpToken = auth?.mcp_token ?? "";
-          const mcpUrl = getServerUrl();
           const gvClient = new GvClient({
-            baseUrl: getGvBaseUrl(mcpUrl),
-            mcpToken,
+            baseUrl: getGvBaseUrl(),
+            mcpToken: auth.mcp_token,
             deviceToken: getOrCreateDeviceToken(),
           });
 
@@ -374,7 +273,7 @@ export function registerShortcutCommands(program: Command) {
             wallet_address: walletAddress,
             message,
             module: "/wallet/sign-message",
-            source: 3,
+            source: 4,
           });
 
           gvCheckinToken = checkinResult.checkin_token;
@@ -406,15 +305,12 @@ export function registerShortcutCommands(program: Command) {
 
         // Step 3: 签名消息
         const signSpinner = ora("签名消息...").start();
-        const signArgs: Record<string, unknown> = { chain, message };
-        if (gvCheckinToken) signArgs.checkin_token = gvCheckinToken;
-
-        const signResult = extractToolJson<{ signature?: string }>(
-          (await mcp.callTool(
-            "dex_wallet_sign_message",
-            signArgs,
-          )) as Record<string, unknown>,
-        );
+        const bwClient = await createBwApiClient(getBwAccessToken(auth));
+        const signResult = await bwClient.signMessage({
+          message,
+          chain,
+          checkinToken: gvCheckinToken ?? "",
+        });
 
         if (signResult?.signature) {
           signSpinner.succeed("签名成功");
@@ -427,111 +323,175 @@ export function registerShortcutCommands(program: Command) {
         console.error(chalk.red((err as Error).message));
       }
     });
-  shortcut(
-    "sign-tx",
-    "签名原始交易",
-    "dex_wallet_sign_transaction",
-    (_opts, pos) => ({ raw_tx: pos[0] }),
-    undefined,
-    "<raw_tx>",
-  );
+  program
+    .command("sign-tx <raw_tx>")
+    .description("签名原始交易（hex），自动完成 GV 安全校验后签名")
+    .option("--chain <chain>", "链名称: ETH | SOL 等", "ETH")
+    .option("--to <address>", "收款地址（用于 GV intent）")
+    .option("--amount <amount>", "金额（用于 GV intent）")
+    .option("--token <token>", "代币符号（用于 GV intent）", "ETH")
+    .action(async function (this: Command, rawTx: string, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        if (!auth.user_id) throw new Error("user_id not found, please re-login");
+        const chain = (opts.chain ?? "ETH").toUpperCase();
+
+        // Step 1: 获取钱包地址（直接用登录时缓存的地址）
+        const walletAddress = (chain === "SOL" ? auth.sol_address : auth.evm_address) ?? "";
+        if (!walletAddress) {
+          console.error(chalk.red(`未找到钱包地址，请重新登录: pnpm cli login`));
+          return;
+        }
+
+        // Step 2: GV Checkin（用 intent 对象，与 send 命令保持一致）
+        const gvSpinner = ora("GV 安全校验...").start();
+        let gvCheckinToken = "";
+        try {
+          const gvClient = new GvClient({
+            baseUrl: getGvBaseUrl(),
+            mcpToken: auth.mcp_token,
+            deviceToken: getOrCreateDeviceToken(),
+          });
+          const checkinResult = await gvClient.txCheckin({
+            wallet_address: walletAddress,
+            intent: {
+              chain,
+              from: walletAddress,
+              to: opts.to ?? walletAddress,
+              amount: opts.amount ?? "0",
+              token: opts.token ?? chain,
+            },
+            module: "/wallet/transfer",
+            source: 4,
+          });
+          gvCheckinToken = checkinResult.checkin_token;
+          gvSpinner.succeed("GV 校验通过");
+
+          if (checkinResult.need_otp) {
+            const { createInterface } = await import("node:readline");
+            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            const otpCode = await new Promise<string>((resolve) => {
+              rl.question(chalk.yellow("  请输入 OTP 验证码: "), (answer) => { rl.close(); resolve(answer.trim()); });
+            });
+            const otpSpinner = ora("OTP 验证中...").start();
+            await gvClient.verifyOtp(gvCheckinToken, walletAddress, otpCode);
+            otpSpinner.succeed("OTP 验证通过");
+          }
+        } catch (err) {
+          gvSpinner.fail(`GV 校验失败: ${(err as Error).message}`);
+          return;
+        }
+
+        // Step 3: 签名交易
+        const signSpinner = ora("签名交易...").start();
+        const bwClient = await createBwApiClient(getBwAccessToken(auth));
+        const result = await bwClient.signTransaction({ rawTx, chain, checkinToken: gvCheckinToken });
+        signSpinner.succeed("签名成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
 
   // ─── Transaction ─────────────────────────────────────────
-  shortcut(
-    "gas",
-    "查询 Gas 费用 (默认 ETH，SOL 自动构建模拟交易)",
-    "dex_tx_gas",
-    async (opts, pos, mcp) => {
-      const GAS_CHAIN_ALIAS: Record<string, string> = {
-        ARB: "ARBITRUM",
-        OP: "OPTIMISM",
-        AVAX: "AVALANCHE",
-        MATIC: "POLYGON",
-      };
-      const raw = (pos[0] ?? opts.chain ?? "ETH").toUpperCase();
-      const chain = GAS_CHAIN_ALIAS[raw] ?? raw;
-      const args: Record<string, unknown> = { chain };
+  program
+    .command("gas")
+    .description("查询 Gas 费用（网关 /gasprice + /gaslimit；SOL 的 gas-limit 需 --data）")
+    .argument("[chain]", "链名 (ETH/SOL/BSC...)")
+    .option("--chain <chain>", "链名")
+    .option("--from <address>", "发送方地址")
+    .option("--to <address>", "接收方地址")
+    .option("--value <value>", "金额 (hex)")
+    .option("--data <data>", "calldata (EVM hex / SOL base64)")
+    .action(async function (this: Command, posChain?: string, opts?: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        const GAS_CHAIN_ALIAS: Record<string, string> = {
+          ARB: "ARBITRUM", OP: "OPTIMISM", AVAX: "AVALANCHE", MATIC: "POLYGON",
+        };
+        const raw = (posChain ?? opts?.chain ?? "ETH").toUpperCase();
+        const chain = GAS_CHAIN_ALIAS[raw] ?? raw;
+        const spinner = ora(`查询 ${chain} Gas...`).start();
+        const gw = createGatewayApiClient(auth.mcp_token);
 
-      if (chain === "SOL") {
-        const addrRaw = await mcp!.callTool("dex_wallet_get_addresses", {});
-        const addrData = extractToolJson<{
-          addresses?: Record<string, string>;
-        }>(addrRaw as Record<string, unknown>);
-        const from = opts.from ?? addrData.addresses?.["SOL"] ?? "";
-        const to = opts.to ?? "So11111111111111111111111111111111111111112";
-        args.from = from;
-        args.to = to;
+        if (chain === "SOL" || chain === "SOLANA") {
+          const [price, limit] = await Promise.all([
+            gatewaySolGasPrice(gw),
+            opts?.data ? gatewaySolGasLimit(gw, opts.data) : Promise.resolve(null),
+          ]);
+          spinner.succeed("查询成功 (SOL)");
+          console.log(JSON.stringify({ gas_price: price, gas_limit: limit }, null, 2));
+        } else {
+          const [price, limit] = await Promise.all([
+            gatewayEvmGasPrice(gw, chain),
+            (opts?.from && opts?.to)
+              ? gatewayEvmGasLimit(gw, { chain, from: opts.from, to: opts.to, data: opts?.data, value: opts?.value })
+              : Promise.resolve(null),
+          ]);
+          spinner.succeed(`查询成功 (${chain})`);
+          console.log(JSON.stringify({ gas_price: price, gas_limit: limit }, null, 2));
+        }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("transfer")
+    .description("转账预览（本地构建 unsigned tx，不广播）")
+    .option("--chain <chain>", "链名 (ETH/BSC/SOL...)")
+    .option("--to <address>", "收款地址")
+    .option("--amount <amount>", "金额")
+    .option("--from <address>", "付款地址 (默认自动获取)")
+    .option("--token <contract>", "Token 合约/Mint 地址 (原生币可不填)")
+    .option("--token-decimals <decimals>", "Token 精度 (SOL SPL 代币需要)")
+    .option("--token-symbol <symbol>", "Token 符号 (用于显示，如 TRUMP/USDC)")
+    .option("--nonce <n>", "EVM nonce (默认自动获取)")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        if (!auth.user_id) throw new Error("user_id not found, please re-login");
 
-        if (opts.data) {
-          args.data = opts.data;
+        const chain = (opts.chain ?? "ETH").toUpperCase();
+        let from = opts.from;
+        if (!from) {
+          from = (chain === "SOL" ? auth.sol_address : auth.evm_address) ?? "";
+          if (!from) throw new Error(`未找到钱包地址，请重新登录: pnpm cli login`);
+        }
+        if (!opts.to || !opts.amount) {
+          throw new Error("--to 和 --amount 必填");
+        }
+
+        const spinner = ora("转账预览...").start();
+        const tokenArg = opts.token?.trim();
+        const previewInput: Parameters<typeof buildTransferPreview>[0] = {
+          from,
+          to: opts.to,
+          amount: opts.amount,
+          chain,
+          token: opts.tokenSymbol,
+          tokenDecimals: opts.tokenDecimals ? Number(opts.tokenDecimals) : undefined,
+          nonce: opts.nonce ? Number(opts.nonce) : undefined,
+          mcpToken: auth.mcp_token,
+        };
+        if (tokenArg) {
+          if (chain === "SOL") previewInput.tokenMint = tokenArg;
+          else previewInput.tokenContract = tokenArg;
+        } else if (chain === "SOL") {
+          previewInput.token = "SOL";
         } else {
-          const unsignedRaw = await mcp!.callTool("dex_tx_get_sol_unsigned", {
-            from,
-            to,
-            amount: opts.amount ?? "0.000001",
-          });
-          const unsignedData = extractToolJson<{ unsigned_tx_hex?: string }>(
-            unsignedRaw as Record<string, unknown>,
-          );
-          if (unsignedData.unsigned_tx_hex) {
-            args.data = b58ToB64(unsignedData.unsigned_tx_hex);
-          }
+          previewInput.token = opts.tokenSymbol ?? "ETH";
         }
-        if (opts.value) args.value = opts.value;
-      } else {
-        if (opts.from) args.from = opts.from;
-        if (opts.to) args.to = opts.to;
+
+        const result = await buildTransferPreview(previewInput);
+        spinner.succeed("预览成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
       }
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名 (ETH/SOL/BSC...)"],
-      ["--from <address>", "发送方地址 (SOL 默认自动获取)"],
-      ["--to <address>", "接收方地址 (SOL 默认同 from)"],
-      ["--amount <amount>", "模拟转账金额 (SOL 用，默认 0.000001)"],
-      ["--value <lamports>", "金额 lamports (SOL 可选)"],
-      ["--data <base64>", "完整序列化交易 base64 (SOL 可选，默认自动构建)"],
-    ],
-    "[chain]",
-  );
-  shortcut(
-    "transfer",
-    "转账预览",
-    "dex_tx_transfer_preview",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain.toUpperCase();
-      if (opts.from) args.from = opts.from;
-      if (opts.to) args.to = opts.to;
-      if (opts.amount) args.amount = opts.amount;
-      if (opts.token) {
-        if (opts.chain && opts.chain.toUpperCase() === "SOL") {
-          args.token_mint = opts.token;
-          if (opts.tokenDecimals)
-            args.token_decimals = Number(opts.tokenDecimals);
-        } else {
-          args.token_contract = opts.token;
-        }
-        if (opts.tokenSymbol) {
-          args.token = opts.tokenSymbol;
-        }
-      } else if (opts.chain && opts.chain.toUpperCase() === "SOL") {
-        args.token = "SOL";
-      } else {
-        args.token = "ETH";
-      }
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名 (ETH/BSC/SOL...)"],
-      ["--to <address>", "收款地址"],
-      ["--amount <amount>", "金额"],
-      ["--from <address>", "付款地址 (默认自动获取)"],
-      ["--token <contract>", "Token 合约/Mint 地址 (原生币可不填)"],
-      ["--token-decimals <decimals>", "Token 精度 (SOL SPL 代币需要)"],
-      ["--token-symbol <symbol>", "Token 符号 (用于显示，如 TRUMP/USDC)"],
-    ],
-  );
+    });
   // ─── 一键转账 (Preview → Sign → Broadcast) ────────────
   program
     .command("send")
@@ -551,159 +511,63 @@ export function registerShortcutCommands(program: Command) {
       opts: Record<string, string | undefined>,
     ) {
       try {
-        const mcp = await ensureAuthedMcp();
+        const sendAuth = loadAuth();
+        if (!sendAuth?.user_id) throw new Error("Not logged in. Run: login");
         const chain = (opts.chain ?? "ETH").toUpperCase();
 
-        const addrRes = extractToolJson<{
-          account_id?: string;
-          addresses?: Record<string, string>;
-        }>(
-          (await mcp.callTool("dex_wallet_get_addresses", {})) as Record<
-            string,
-            unknown
-          >,
-        );
-        const accountId = addrRes.account_id ?? "";
-        const from =
-          opts.from ??
-          (chain === "SOL"
-            ? addrRes.addresses?.["SOL"]
-            : addrRes.addresses?.["EVM"]) ??
-          "";
+        const accountId = sendAuth.account_id ?? sendAuth.user_id ?? "";
+        const from = opts.from ?? (chain === "SOL" ? sendAuth.sol_address : sendAuth.evm_address) ?? "";
 
         if (!opts.to || !opts.amount) {
           console.error(chalk.red("--to 和 --amount 是必填项"));
           return;
         }
 
-        // Auto-resolve token_decimals and token symbol for SPL/ERC20 transfers
-        let tokenDecimals: number | undefined;
-        let tokenSymbol: string | undefined = opts.tokenSymbol;
-        if (opts.tokenDecimals) {
-          tokenDecimals = Number(opts.tokenDecimals);
-        }
-        if (opts.token && chain === "SOL" && (!tokenDecimals || !tokenSymbol)) {
-          try {
-            const tokenListRes = extractToolJson<{
-              tokens?: Array<{
-                address?: string;
-                decimal?: number;
-                symbol?: string;
-              }>;
-            }>(
-              (await mcp.callTool("dex_token_list_swap_tokens", {
-                chain_name: "solana",
-                search: opts.token,
-              })) as Record<string, unknown>,
-            );
-            const matched = tokenListRes.tokens?.find(
-              (t) => t.address?.toLowerCase() === opts.token!.toLowerCase(),
-            );
-            if (matched?.decimal != null && !tokenDecimals) {
-              tokenDecimals = matched.decimal;
-            }
-            if (matched?.symbol && !tokenSymbol) {
-              tokenSymbol = matched.symbol;
-            }
-          } catch {
-            // ignore lookup failure; will fail at preview if decimals truly required
-          }
-        } else if (opts.token && chain !== "SOL" && !tokenSymbol) {
-          try {
-            const chainName =
-              chain === "ETH" ? "ethereum" : chain.toLowerCase();
-            const tokenListRes = extractToolJson<{
-              tokens?: Array<{ address?: string; symbol?: string }>;
-            }>(
-              (await mcp.callTool("dex_token_list_swap_tokens", {
-                chain_name: chainName,
-                search: opts.token,
-              })) as Record<string, unknown>,
-            );
-            const matched = tokenListRes.tokens?.find(
-              (t) => t.address?.toLowerCase() === opts.token!.toLowerCase(),
-            );
-            if (matched?.symbol) {
-              tokenSymbol = matched.symbol;
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        // Step 1: Preview
+        // Step 1: Preview (local build — no MCP call)
         const previewSpinner = ora("转账预览...").start();
-        const previewArgs: Record<string, unknown> = {
-          chain,
+        const tokenArg = opts.token?.trim();
+        const previewInput: Parameters<typeof buildTransferPreview>[0] = {
           from,
           to: opts.to,
           amount: opts.amount,
+          chain,
+          token: opts.tokenSymbol,
+          tokenDecimals: opts.tokenDecimals ? Number(opts.tokenDecimals) : undefined,
+          mcpToken: sendAuth.mcp_token,
         };
-        if (opts.token) {
-          if (chain === "SOL") {
-            previewArgs.token_mint = opts.token;
-            if (tokenDecimals != null) {
-              previewArgs.token_decimals = tokenDecimals;
-            }
-          } else {
-            previewArgs.token_contract = opts.token;
-          }
-          if (tokenSymbol) {
-            previewArgs.token = tokenSymbol;
-          }
+        if (tokenArg) {
+          if (chain === "SOL") previewInput.tokenMint = tokenArg;
+          else previewInput.tokenContract = tokenArg;
         } else if (chain === "SOL") {
-          previewArgs.token = "SOL";
+          previewInput.token = "SOL";
         } else {
-          previewArgs.token = "ETH";
+          previewInput.token = opts.tokenSymbol ?? "ETH";
         }
-        let previewResult = extractToolJson<{
-          key_info?: Record<string, unknown>;
-          unsigned_tx_hex?: string;
-          confirm_message?: string;
-        }>(
-          (await mcp.callTool(
-            "dex_tx_transfer_preview",
-            previewArgs,
-          )) as Record<string, unknown>,
-        );
-
-        const unsignedTx =
-          previewResult.unsigned_tx_hex ??
-          ((previewResult.key_info as Record<string, unknown> | undefined)
-            ?.unsigned_tx_hex as string | undefined);
-
-        if (!unsignedTx) {
-          previewSpinner.fail("预览失败：未获得 unsigned_tx_hex");
-          console.log(JSON.stringify(previewResult, null, 2));
-          return;
-        }
-
-        const keyInfo = previewResult.key_info ?? {};
+        const previewResult = await buildTransferPreview(previewInput);
+        const unsignedTx = previewResult.unsigned_tx_hex;
+        const keyInfo = previewResult.key_info;
         const token = (keyInfo.token as string) ?? chain;
         previewSpinner.succeed(
           `预览成功：${keyInfo.summary ?? `${opts.amount} ${token} → ${opts.to}`}`,
         );
 
-        // SOL native: refresh blockhash via get_sol_unsigned (SPL tokens skip — get_sol_unsigned only supports native SOL)
+        // SOL native: refresh blockhash right before signing (SPL tokens skip — ATA already built)
         let txToSign = unsignedTx;
-        if (chain === "SOL" && !opts.token) {
+        if (chain === "SOL" && !tokenArg) {
           const freshSpinner = ora("获取最新 blockhash...").start();
-          const solArgs: Record<string, unknown> = {
-            from,
-            to: opts.to,
-            amount: opts.amount,
-          };
-          const freshResult = extractToolJson<{ unsigned_tx_hex?: string }>(
-            (await mcp.callTool("dex_tx_get_sol_unsigned", solArgs)) as Record<
-              string,
-              unknown
-            >,
-          );
-          if (freshResult.unsigned_tx_hex) {
-            txToSign = freshResult.unsigned_tx_hex;
+          try {
+            const fresh = await buildSolUnsigned({
+              from,
+              to: opts.to,
+              amount: opts.amount,
+              mcpToken: sendAuth.mcp_token,
+            });
+            txToSign = fresh.unsigned_tx_hex;
             freshSpinner.succeed("已获取最新 unsigned_tx");
-          } else {
-            freshSpinner.warn("未能刷新 blockhash，使用预览的 unsigned_tx");
+          } catch (err) {
+            freshSpinner.warn(
+              `未能刷新 blockhash (${(err as Error).message})，使用预览的 unsigned_tx`,
+            );
           }
         }
 
@@ -713,9 +577,8 @@ export function registerShortcutCommands(program: Command) {
         try {
           const auth = loadAuth();
           const mcpToken = auth?.mcp_token ?? "";
-          const mcpUrl = getServerUrl();
           const gvClient = new GvClient({
-            baseUrl: getGvBaseUrl(mcpUrl),
+            baseUrl: getGvBaseUrl(),
             mcpToken,
             deviceToken: getOrCreateDeviceToken(),
           });
@@ -730,7 +593,7 @@ export function registerShortcutCommands(program: Command) {
               token: token,
             },
             module: "/wallet/transfer",
-            source: 3, // aiAgent，用于 MCP 相关业务
+            source: 4,
           });
 
           gvCheckinToken = checkinResult.checkin_token;
@@ -759,24 +622,14 @@ export function registerShortcutCommands(program: Command) {
 
         // Step 3: Sign
         const signSpinner = ora("签名交易...").start();
-        const signArgs: Record<string, unknown> = {
-          chain: chain,
-          raw_tx: txToSign,
-        };
-        if (gvCheckinToken) {
-          signArgs.checkin_token = gvCheckinToken;
-        }
-        const signResult = extractToolJson<{
-          signedTransaction?: string;
-          signature?: string;
-        }>(
-          (await mcp.callTool(
-            "dex_wallet_sign_transaction",
-            signArgs,
-          )) as Record<string, unknown>,
-        );
+        const sendBwClient = await createBwApiClient(getBwAccessToken(sendAuth));
+        const signResult = await sendBwClient.signTransaction({
+          rawTx: txToSign,
+          chain,
+          checkinToken: gvCheckinToken ?? "",
+        });
 
-        const signedTx = signResult.signedTransaction;
+        const signedTx = signResult.signedTransactionWith0x ?? signResult.signedTransaction;
         if (!signedTx) {
           signSpinner.fail("签名失败");
           console.log(JSON.stringify(signResult, null, 2));
@@ -784,84 +637,103 @@ export function registerShortcutCommands(program: Command) {
         }
         signSpinner.succeed("签名成功");
 
-        // Step 3: Broadcast
+        // Step 4: Broadcast via gateway
         const broadcastSpinner = ora("广播交易...").start();
-        const sendResult = extractToolJson<{
-          hash?: string;
-          explorer_url?: string;
-        }>(
-          (await mcp.callTool("dex_tx_send_raw_transaction", {
-            chain,
-            signed_tx: signedTx,
-            account_id: accountId,
+        const gwClient = createGatewayApiClient(sendAuth.mcp_token);
+        const isSol = chain === "SOL";
+        const chainType = isSol ? "SOL" : "EVM";
+        const tokenContract = String(keyInfo.token_contract ?? "");
+        const amountRaw = String(keyInfo.amount_raw ?? keyInfo.amount_lamports ?? "0");
+        const rpcAddress = isSol
+          ? "https://api.mainnet-beta.solana.com"
+          : undefined;
+        const result = await gatewaySendRawTransaction(gwClient, {
+          chain_name: chain,
+          params: [signedTx],
+          rpc_address: rpcAddress,
+          account_id: accountId,
+          trace: {
+            user_id: sendAuth.user_id,
+            wallet_address: from,
+            wallet_network: chainType,
+            wallet_source: "cli",
+            system_type: process.platform,
+            device_name: "cli",
+            system_version: process.version,
+            app_version: "cli",
+          },
+          history_data: {
+            chain_type: chainType,
             address: from,
-            trans_oppo_address: opts.to,
+            chain_name: chain,
+            token_addr: tokenContract === "native" ? "" : tokenContract,
+            token_name: token,
             token_short_name: token,
-            trans_balance: opts.amount,
-            trans_type: "transfer",
-          })) as Record<string, unknown>,
-        );
-
-        if (sendResult.hash) {
-          broadcastSpinner.succeed("交易已广播");
-          console.log(chalk.green(`  Hash: ${sendResult.hash}`));
-          if (sendResult.explorer_url) {
-            console.log(chalk.gray(`  Explorer: ${sendResult.explorer_url}`));
-          }
-        } else {
-          broadcastSpinner.fail("广播失败");
-          console.log(JSON.stringify(sendResult, null, 2));
-        }
+            token_type: tokenContract && tokenContract !== "native" ? "ERC20" : "coin",
+            trans_type: "send",
+            trans_time: String(Math.floor(Date.now() / 1000)),
+            trans_balance: opts.amount ?? "0",
+            trans_min_unit_amount: amountRaw,
+            trans_balance_usd: "0",
+            trans_oppo_address: opts.to ?? "",
+            trans_gas_fee: "0",
+            is_contra: tokenContract && tokenContract !== "native" ? "1" : "0",
+            memo: "",
+            memo_name: "",
+            platform_operation: "",
+            platform_name: "",
+          },
+        });
+        broadcastSpinner.succeed("广播成功");
+        console.log(JSON.stringify(result, null, 2));
       } catch (err) {
         console.error(chalk.red((err as Error).message));
       }
     });
 
-  shortcut(
-    "quote",
-    "获取兑换报价 (ETH→USDT: --from-chain 1 --to-chain 1 --from - --to 0xdAC1...ec7 --native-in 1 --native-out 0)",
-    "dex_tx_quote",
-    async (opts, _pos, mcp) => {
-      const args: Record<string, unknown> = {};
-      if (opts.fromChain) args.chain_id_in = Number(opts.fromChain);
-      if (opts.toChain) args.chain_id_out = Number(opts.toChain);
-      if (opts.from) args.token_in = opts.from;
-      if (opts.to) args.token_out = opts.to;
-      if (opts.amount) args.amount = opts.amount;
-      if (opts.slippage) {
-        const raw = Number(opts.slippage);
-        args.slippage = raw >= 1 ? raw / 100 : raw;
+  program
+    .command("quote")
+    .description("获取兑换报价 (ETH→USDT: --from-chain 1 --to-chain 1 --from - --to 0xdAC1...ec7 --native-in 1)")
+    .option("--from-chain <id>", "源链 ID (ETH=1, BSC=56, SOL=501...)", "1")
+    .option("--to-chain <id>", "目标链 ID (同链 swap 则和 from-chain 相同)", "1")
+    .option("--from <token>", "源 token 地址, 原生币用 -")
+    .option("--to <token>", "目标 token 合约地址")
+    .option("--amount <amount>", "数量")
+    .option("--slippage <pct>", "滑点 (0.03=3%)", "0.03")
+    .option("--native-in <0|1>", "源 token 是否原生币 (1=是, 0=否)")
+    .option("--native-out <0|1>", "目标 token 是否原生币 (1=是, 0=否)")
+    .option("--wallet <address>", "钱包地址 (默认自动获取)")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const chainIdIn = Number(opts.fromChain ?? 1);
+        const chainIdOut = Number(opts.toChain ?? opts.fromChain ?? 1);
+        let wallet = opts.wallet;
+        if (!wallet) {
+          const quoteAuth = loadAuth();
+          if (!quoteAuth?.user_id) throw new Error("Not logged in. Run: login");
+          wallet = chainIdIn === 501 ? quoteAuth.sol_address : quoteAuth.evm_address;
+        }
+        const rawSlippage = Number(opts.slippage ?? "0.03");
+        const slippage = rawSlippage >= 1 ? rawSlippage / 100 : rawSlippage;
+
+        const spinner = ora("获取报价...").start();
+        const result = await createSwapApiClient().quote({
+          chain_id_in: chainIdIn,
+          chain_id_out: chainIdOut,
+          token_in: opts.from ?? "-",
+          token_out: opts.to ?? "",
+          amount: opts.amount ?? "0",
+          slippage,
+          native_in: Number(opts.nativeIn ?? "0"),
+          native_out: Number(opts.nativeOut ?? "0"),
+          user_wallet: wallet,
+        });
+        spinner.succeed("报价获取成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
       }
-      if (opts.nativeIn) args.native_in = Number(opts.nativeIn);
-      if (opts.nativeOut) args.native_out = Number(opts.nativeOut);
-      if (opts.wallet) {
-        args.user_wallet = opts.wallet;
-      } else {
-        const addrRes = (await mcp!.callTool(
-          "dex_wallet_get_addresses",
-          {},
-        )) as Record<string, unknown>;
-        const addresses = addrRes.addresses as
-          | Record<string, string>
-          | undefined;
-        const chainId = Number(opts.fromChain ?? 1);
-        args.user_wallet =
-          chainId === 501 ? addresses?.["SOL"] : addresses?.["EVM"];
-      }
-      return args;
-    },
-    [
-      ["--from-chain <id>", "源链 ID (ETH=1, BSC=56, SOL=501...)", "1"],
-      ["--to-chain <id>", "目标链 ID (同链 swap 则和 from-chain 相同)", "1"],
-      ["--from <token>", "源 token 地址, 原生币用 -"],
-      ["--to <token>", "目标 token 合约地址"],
-      ["--amount <amount>", "数量"],
-      ["--slippage <pct>", "滑点 (0.03=3%)", "0.03"],
-      ["--native-in <0|1>", "源 token 是否原生币 (1=是, 0=否)"],
-      ["--native-out <0|1>", "目标 token 是否原生币 (1=是, 0=否)"],
-      ["--wallet <address>", "钱包地址 (默认自动获取)"],
-    ],
-  );
+    });
   program
     .command("swap")
     .description(
@@ -879,59 +751,66 @@ export function registerShortcutCommands(program: Command) {
     .option("--to-wallet <address>", "目标链钱包地址（跨链时需要）")
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
-        const mcp = await ensureAuthedMcp();
+        const swapAuth = loadAuth();
+        if (!swapAuth?.user_id) throw new Error("Not logged in. Run: login");
 
-        // Step 1: 获取钱包地址
-        const addrRes = extractToolJson<{
-          account_id?: string;
-          addresses?: Record<string, string>;
-        }>(
-          (await mcp.callTool("dex_wallet_get_addresses", {})) as Record<string, unknown>,
-        );
-        const accountId = addrRes?.account_id ?? "";
-        const addresses = addrRes?.addresses ?? {};
+        const accountId = swapAuth.account_id ?? swapAuth.user_id ?? "";
         const chainIdIn = Number(opts.fromChain ?? 1);
         const chainIdOut = Number(opts.toChain ?? opts.fromChain ?? 1);
         const wallet =
           opts.wallet ??
-          (chainIdIn === 501 ? addresses["SOL"] : addresses["EVM"]) ??
+          (chainIdIn === 501 ? swapAuth.sol_address : swapAuth.evm_address) ??
           "";
+        if (!wallet) throw new Error("无法获取钱包地址，请重新登录");
+        if (!opts.from || !opts.to || !opts.amount) {
+          throw new Error("--from / --to / --amount 必填");
+        }
 
         const rawSlippage = Number(opts.slippage ?? "0.03");
         const slippage = rawSlippage >= 1 ? rawSlippage / 100 : rawSlippage;
+        const nativeIn = Number(opts.nativeIn ?? "0");
+        const nativeOut = Number(opts.nativeOut ?? "0");
 
-        // Step 2: Quote
+        // Step 2: Quote (preview only — swapPrepare will re-quote internally)
         const quoteSpinner = ora("获取报价...").start();
-        const quoteArgs: Record<string, unknown> = {
+        const swapApi = createSwapApiClient();
+        const quoteResult = (await swapApi.quote({
           chain_id_in: chainIdIn,
           chain_id_out: chainIdOut,
-          token_in: opts.from,
-          token_out: opts.to,
+          token_in: nativeIn === 1 ? "-" : opts.from,
+          token_out: nativeOut === 1 ? "-" : opts.to,
           amount: opts.amount,
           slippage,
+          slippage_type: 2,
+          swap_type: 2,
+          native_in: nativeIn,
+          native_out: nativeOut,
           user_wallet: wallet,
-          native_in: Number(opts.nativeIn ?? "0"),
-          native_out: Number(opts.nativeOut ?? "0"),
-        };
-        if (opts.toWallet) quoteArgs.to_wallet = opts.toWallet;
-
-        const quoteResult = extractToolJson<{
+          from_wallet: wallet,
+          to_wallet: opts.toWallet ?? wallet,
+          extra_data: { is_multi: true },
+        })) as {
+          amount_out?: string;
           to_amount?: string;
           to_amount_usd?: string;
           price_impact?: string;
           gas_fee_usd?: string;
-          routes?: Array<{ need_approved?: number; path?: string[] }>;
-        }>(
-          (await mcp.callTool("dex_tx_swap_quote", quoteArgs)) as Record<string, unknown>,
-        );
+          estimate_gas_fee_amount?: string;
+          routes?: Array<{ need_approved?: number }>;
+          need_approved?: number;
+        };
         quoteSpinner.succeed("报价获取成功");
 
         console.log(chalk.bold("\n兑换预览："));
-        console.log(`  获得：${chalk.green(quoteResult?.to_amount ?? "-")} (~$${quoteResult?.to_amount_usd ?? "-"})`);
-        console.log(`  价格影响：${quoteResult?.price_impact ?? "-"}`);
-        console.log(`  Gas 费用：~$${quoteResult?.gas_fee_usd ?? "-"}`);
-        const needApproved = quoteResult?.routes?.[0]?.need_approved === 2;
-        if (needApproved) {
+        console.log(
+          `  获得：${chalk.green(quoteResult.amount_out ?? quoteResult.to_amount ?? "-")}${quoteResult.to_amount_usd ? ` (~$${quoteResult.to_amount_usd})` : ""}`,
+        );
+        if (quoteResult.price_impact) console.log(`  价格影响：${quoteResult.price_impact}`);
+        const gasFee = quoteResult.gas_fee_usd ?? quoteResult.estimate_gas_fee_amount;
+        if (gasFee) console.log(`  Gas 费用：${gasFee}`);
+        const quoteNeedApprove =
+          (quoteResult.routes?.[0]?.need_approved ?? quoteResult.need_approved) === 2;
+        if (quoteNeedApprove) {
           console.log(chalk.yellow("  ⚠️  需要先进行 Token 授权（Approve）"));
         }
 
@@ -946,32 +825,57 @@ export function registerShortcutCommands(program: Command) {
           return;
         }
 
-        // Step 4: Prepare
+        // Step 4: Prepare (quote + build + 建立本地 session)
         const prepareSpinner = ora("准备兑换会话...").start();
-        const prepareArgs: Record<string, unknown> = {
-          ...quoteArgs,
+        const prepared = await swapPrepare({
+          chain_id_in: chainIdIn,
+          chain_id_out: chainIdOut,
+          token_in: opts.from,
+          token_out: opts.to,
+          amount: opts.amount,
+          slippage,
+          native_in: nativeIn,
+          native_out: nativeOut,
+          user_wallet: wallet,
+          to_wallet: opts.toWallet ?? wallet,
           account_id: accountId,
-        };
-        const prepareResult = extractToolJson<{
-          swap_session_id?: string;
-          need_approved?: boolean;
-        }>(
-          (await mcp.callTool("dex_tx_swap_prepare", prepareArgs)) as Record<string, unknown>,
-        );
-        const swapSessionId = prepareResult?.swap_session_id;
-        if (!swapSessionId) {
-          prepareSpinner.fail("Prepare 失败，未获得 swap_session_id");
-          console.log(JSON.stringify(prepareResult, null, 2));
-          return;
-        }
+          mcp_token: swapAuth.mcp_token,
+        });
+        const swapSessionId = prepared.swap_session_id;
         prepareSpinner.succeed(`会话创建成功 (${swapSessionId.slice(0, 8)}...)`);
 
+        const bwClient = await createBwApiClient(getBwAccessToken(swapAuth));
+        const signer = async (signOpts: {
+          rawTx: string;
+          chain: "EVM" | "SOL";
+          checkinToken: string;
+        }) => bwClient.signTransaction(signOpts);
+
         // Step 5: Approve（如需要）
-        if (prepareResult?.need_approved) {
+        if (prepared.need_approved) {
           const approveGvSpinner = ora("GV 安全校验（Approve 阶段）...").start();
           let approveCheckinToken: string;
           try {
-            approveCheckinToken = await performSwapGvCheckin(mcp, swapSessionId, "approve");
+            const preview = await swapCheckinPreview({
+              swap_session_id: swapSessionId,
+              stage: "approve",
+            });
+            const gvClient = new GvClient({
+              baseUrl: getGvBaseUrl(),
+              mcpToken: swapAuth.mcp_token,
+              deviceToken: getOrCreateDeviceToken(),
+            });
+            const checkin = await gvClient.txCheckin({
+              wallet_address: preview.user_wallet,
+              intent: {
+                chain: preview.chain,
+                from: preview.user_wallet,
+                type: "swap",
+              },
+              module: "/wallet/transfer",
+              source: 4,
+            });
+            approveCheckinToken = checkin.checkin_token;
             approveGvSpinner.succeed("GV 校验通过（Approve）");
           } catch (err) {
             approveGvSpinner.fail(`GV 校验失败: ${(err as Error).message}`);
@@ -979,24 +883,43 @@ export function registerShortcutCommands(program: Command) {
           }
 
           const approveSpinner = ora("签名 Approve...").start();
-          const approveResult = extractToolJson<{ success?: boolean }>(
-            (await mcp.callTool("dex_tx_swap_sign_approve", {
+          try {
+            await swapSignApprove({
               swap_session_id: swapSessionId,
               checkin_token: approveCheckinToken,
-            })) as Record<string, unknown>,
-          );
-          if (!approveResult) {
-            approveSpinner.fail("Approve 签名失败");
+              signTransaction: signer,
+            });
+            approveSpinner.succeed("Approve 签名成功");
+          } catch (err) {
+            approveSpinner.fail(`Approve 签名失败: ${(err as Error).message}`);
             return;
           }
-          approveSpinner.succeed("Approve 签名成功");
         }
 
         // Step 6: Swap GV Checkin
         const swapGvSpinner = ora("GV 安全校验（Swap 阶段）...").start();
         let swapCheckinToken: string;
         try {
-          swapCheckinToken = await performSwapGvCheckin(mcp, swapSessionId, "swap");
+          const preview = await swapCheckinPreview({
+            swap_session_id: swapSessionId,
+            stage: "swap",
+          });
+          const gvClient = new GvClient({
+            baseUrl: getGvBaseUrl(),
+            mcpToken: swapAuth.mcp_token,
+            deviceToken: getOrCreateDeviceToken(),
+          });
+          const checkin = await gvClient.txCheckin({
+            wallet_address: preview.user_wallet,
+            intent: {
+              chain: preview.chain,
+              from: preview.user_wallet,
+              type: "swap",
+            },
+            module: "/wallet/transfer",
+            source: 4,
+          });
+          swapCheckinToken = checkin.checkin_token;
           swapGvSpinner.succeed("GV 校验通过（Swap）");
         } catch (err) {
           swapGvSpinner.fail(`GV 校验失败: ${(err as Error).message}`);
@@ -1005,445 +928,556 @@ export function registerShortcutCommands(program: Command) {
 
         // Step 7: Sign Swap
         const signSwapSpinner = ora("签名兑换交易...").start();
-        const signSwapResult = extractToolJson<{ success?: boolean }>(
-          (await mcp.callTool("dex_tx_swap_sign_swap", {
+        try {
+          await swapSignSwap({
             swap_session_id: swapSessionId,
             checkin_token: swapCheckinToken,
-          })) as Record<string, unknown>,
-        );
-        if (!signSwapResult) {
-          signSwapSpinner.fail("Swap 签名失败");
+            signTransaction: signer,
+          });
+          signSwapSpinner.succeed("Swap 签名成功");
+        } catch (err) {
+          signSwapSpinner.fail(`Swap 签名失败: ${(err as Error).message}`);
           return;
         }
-        signSwapSpinner.succeed("Swap 签名成功");
 
         // Step 8: Submit
         const submitSpinner = ora("提交兑换...").start();
-        const submitResult = extractToolJson<{
-          tx_order_id?: string;
-          tx_hash?: string;
-          explorer_url?: string;
-        }>(
-          (await mcp.callTool("dex_tx_swap_submit", {
-            swap_session_id: swapSessionId,
-          })) as Record<string, unknown>,
-        );
-
-        if (submitResult?.tx_order_id || submitResult?.tx_hash) {
+        try {
+          const submit = await swapSubmit({ swap_session_id: swapSessionId });
           submitSpinner.succeed("兑换已提交");
-          if (submitResult.tx_hash) {
-            console.log(chalk.green(`  Hash: ${submitResult.tx_hash}`));
-          }
-          if (submitResult.tx_order_id) {
-            console.log(chalk.gray(`  Order ID: ${submitResult.tx_order_id}`));
-          }
-          if (submitResult.explorer_url) {
-            console.log(chalk.gray(`  Explorer: ${submitResult.explorer_url}`));
-          }
-        } else {
-          submitSpinner.fail("提交失败");
-          console.log(JSON.stringify(submitResult, null, 2));
+          if (submit.tx_hash) console.log(chalk.green(`  Hash: ${submit.tx_hash}`));
+          if (submit.tx_order_id) console.log(chalk.gray(`  Order ID: ${submit.tx_order_id}`));
+        } catch (err) {
+          submitSpinner.fail(`提交失败: ${(err as Error).message}`);
         }
       } catch (err) {
         console.error(chalk.red((err as Error).message));
       }
     });
-  shortcut(
-    "swap-detail",
-    "查询兑换交易详情",
-    "dex_tx_swap_detail",
-    (_opts, pos) => ({ tx_order_id: pos[0] }),
-    undefined,
-    "<order_id>",
-  );
-  shortcut(
-    "send-tx",
-    "广播已签名交易（自动获取 account_id 和 address）",
-    "dex_tx_send_raw_transaction",
-    async (opts, _pos, mcp) => {
-      const addrRes = (await mcp!.callTool(
-        "dex_wallet_get_addresses",
-        {},
-      )) as Record<string, unknown>;
-      const accountId = addrRes.account_id as string;
-      const chain = (opts.chain ?? "ETH").toUpperCase();
-      const addresses = addrRes.addresses as Record<string, string> | undefined;
-      const fromAddr =
-        opts.address ?? addresses?.[chain === "ETH" ? "EVM" : chain] ?? "";
+  program
+    .command("swap-detail")
+    .description("查询兑换交易详情")
+    .argument("<order_id>", "交易 order ID")
+    .action(async function (this: Command, orderId: string) {
+      try {
+        const spinner = ora("查询兑换详情...").start();
+        const result = await createSwapApiClient().swapDetail(orderId);
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("send-tx")
+    .description("构建、签名并广播转账交易（一步完成）")
+    .option("--chain <chain>", "链名，如 ETH / BSC / SOL", "ETH")
+    .option("--to <to>", "接收方地址（必填）")
+    .option("--amount <amount>", "转账金额（必填）")
+    .option("--token <symbol>", "代币符号，如 ETH / USDT / BNB")
+    .option("--address <from>", "发送方地址（默认自动获取）")
+    .option("--hex <signed_tx>", "已签名交易 hex（跳过 preview+sign，直接广播）")
+    .option("--token-contract <contract>", "ERC20 合约地址（可选）")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const sendAuth = loadAuth();
+        if (!sendAuth?.user_id) throw new Error("Not logged in. Run: login");
 
-      const args: Record<string, unknown> = {
-        chain,
-        signed_tx: opts.hex,
-        account_id: accountId,
-        address: fromAddr,
-        trans_oppo_address: opts.to,
-        token_short_name: opts.token ?? chain,
-        trans_balance: opts.amount ?? "0",
-        trans_type: opts.type ?? "transfer",
-      };
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名，如 ETH", "ETH"],
-      ["--hex <signed_tx>", "签名后的交易 hex"],
-      ["--to <to>", "接收方地址"],
-      ["--token <symbol>", "代币名称，如 ETH / USDT"],
-      ["--amount <amount>", "转账金额"],
-      ["--address <from>", "发送方地址（默认自动获取）"],
-      ["--type <type>", "交易类型", "transfer"],
-    ],
-  );
-  shortcut(
-    "tx-detail",
-    "查询交易详情 (by hash)",
-    "dex_tx_detail",
-    (_opts, pos) => ({ hash_id: pos[0] }),
-    undefined,
-    "<tx_hash>",
-  );
-  shortcut(
-    "tx-history",
-    "查询交易历史",
-    "dex_tx_list",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.page) args.page_num = opts.page;
-      if (opts.limit) args.page_size = opts.limit;
-      return args;
-    },
-    [
-      ["--page <n>", "页码", "1"],
-      ["--limit <n>", "每页条数", "20"],
-    ],
-  );
-  shortcut(
-    "swap-history",
-    "查询 Swap/Bridge 交易历史",
-    "dex_tx_history_list",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.page) args.page_num = Number(opts.page);
-      if (opts.limit) args.page_size = Number(opts.limit);
-      return args;
-    },
-    [
-      ["--page <n>", "页码", "1"],
-      ["--limit <n>", "每页条数", "20"],
-    ],
-  );
-  shortcut(
-    "sol-tx",
-    "构建 Solana 未签名转账交易",
-    "dex_tx_get_sol_unsigned",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.to) args.to_address = opts.to;
-      if (opts.amount) args.amount = opts.amount;
-      if (opts.mint) args.token_mint = opts.mint;
-      return args;
-    },
-    [
-      ["--to <address>", "收款地址"],
-      ["--amount <amount>", "金额"],
-      ["--mint <address>", "SPL Token Mint (原生 SOL 可不填)"],
-    ],
-  );
+        const chain = (opts.chain ?? "ETH").toUpperCase();
+
+        // Step 1: 获取钱包地址（直接用登录时缓存的地址）
+        const addrSpinner = ora("获取钱包地址...").start();
+        const accountId = sendAuth.account_id ?? sendAuth.user_id ?? "";
+        const isSol = chain === "SOL";
+        const fromAddr = opts.address ?? (isSol ? sendAuth.sol_address : sendAuth.evm_address) ?? "";
+        addrSpinner.succeed(`钱包地址: ${fromAddr}`);
+
+        let signedHex = opts.hex ?? "";
+        let preview: Awaited<ReturnType<typeof buildTransferPreview>> | undefined;
+
+        if (!signedHex) {
+          // 需要 to + amount
+          if (!opts.to) throw new Error("缺少 --to 接收方地址");
+          if (!opts.amount) throw new Error("缺少 --amount 转账金额");
+
+          // Step 2: 构建未签名交易
+          const previewSpinner = ora("构建未签名交易...").start();
+          preview = await buildTransferPreview({
+            from: fromAddr,
+            to: opts.to,
+            amount: opts.amount,
+            chain,
+            token: opts.token,
+            tokenContract: opts.tokenContract,
+            mcpToken: sendAuth.mcp_token,
+          });
+          previewSpinner.succeed("未签名交易构建完成");
+
+          // Step 3: GV 安全校验
+          const gvSpinner = ora("GV 安全校验...").start();
+          let checkinToken = "";
+          try {
+            const gvClient = new GvClient({
+              baseUrl: getGvBaseUrl(),
+              mcpToken: sendAuth.mcp_token,
+              deviceToken: getOrCreateDeviceToken(),
+            });
+            const checkinResult = await gvClient.txCheckin({
+              wallet_address: fromAddr,
+              intent: {
+                chain,
+                from: fromAddr,
+                to: opts.to,
+                amount: opts.amount,
+                token: opts.token ?? chain,
+              },
+              module: "/wallet/transfer",
+              source: 4,
+            });
+            checkinToken = checkinResult.checkin_token;
+            gvSpinner.succeed("GV 校验通过");
+
+            if (checkinResult.need_otp) {
+              const { createInterface } = await import("node:readline");
+              const rl = createInterface({ input: process.stdin, output: process.stdout });
+              const otpCode = await new Promise<string>((resolve) => {
+                rl.question(chalk.yellow("  请输入 OTP 验证码: "), (answer) => { rl.close(); resolve(answer.trim()); });
+              });
+              const otpSpinner = ora("OTP 验证中...").start();
+              await gvClient.verifyOtp(checkinToken, fromAddr, otpCode);
+              otpSpinner.succeed("OTP 验证通过");
+            }
+          } catch (err) {
+            gvSpinner.fail(`GV 校验失败: ${(err as Error).message}`);
+            return;
+          }
+
+          // Step 4: 签名
+          const signSpinner = ora("签名交易...").start();
+          const bwClient = await createBwApiClient(getBwAccessToken(sendAuth));
+          const signResult = await bwClient.signTransaction({
+            rawTx: preview.unsigned_tx_hex,
+            chain,
+            checkinToken,
+          });
+          signedHex = signResult?.signedTransactionWith0x ?? signResult?.signedTransaction ?? "";
+          if (!signedHex) throw new Error(`签名返回为空: ${JSON.stringify(signResult)}`);
+          signSpinner.succeed("签名成功");
+        }
+
+        // Step 5: 广播
+        const broadcastSpinner = ora("广播交易...").start();
+        const gwClient = createGatewayApiClient(sendAuth.mcp_token);
+        const ki = preview?.key_info ?? {};
+        const tokenShort = String(ki["token"] ?? opts.token ?? chain);
+        const tokenContract = String(ki["token_contract"] ?? "");
+        const amountRaw = String(ki["amount_raw"] ?? ki["amount_lamports"] ?? "0");
+        const gasLimit = Number(ki["gas_limit"] ?? 0);
+        const maxFee = String(ki["max_fee_per_gas"] ?? "0");
+        const gasFeeWei = gasLimit > 0 ? (BigInt(gasLimit) * BigInt(maxFee)).toString() : "0";
+        const chainType = isSol ? "SOL" : "EVM";
+        const rpcAddress = isSol
+          ? "https://api.mainnet-beta.solana.com"
+          : undefined;
+        const result = await gatewaySendRawTransaction(gwClient, {
+          chain_name: chain,
+          params: [signedHex],
+          rpc_address: rpcAddress,
+          account_id: accountId,
+          trace: {
+            user_id: sendAuth.user_id,
+            wallet_address: fromAddr,
+            wallet_network: chainType,
+            wallet_source: "cli",
+            system_type: process.platform,
+            device_name: "cli",
+            system_version: process.version,
+            app_version: "cli",
+          },
+          history_data: {
+            chain_type: chainType,
+            address: fromAddr,
+            chain_name: chain,
+            token_addr: tokenContract === "native" ? "" : tokenContract,
+            token_name: tokenShort,
+            token_short_name: tokenShort,
+            token_type: tokenContract && tokenContract !== "native" ? "ERC20" : "coin",
+            trans_type: "send",
+            trans_time: String(Math.floor(Date.now() / 1000)),
+            trans_balance: opts.amount ?? "0",
+            trans_min_unit_amount: amountRaw,
+            trans_balance_usd: "0",
+            trans_oppo_address: opts.to ?? "",
+            trans_gas_fee: gasFeeWei,
+            is_contra: tokenContract && tokenContract !== "native" ? "1" : "0",
+            memo: "",
+            memo_name: "",
+            platform_operation: "",
+            platform_name: "",
+          },
+        });
+        broadcastSpinner.succeed("广播成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("tx-detail")
+    .description("查询交易详情 (by hash)")
+    .argument("<tx_hash>", "交易 hash")
+    .action(async function (this: Command, txHash: string) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        const spinner = ora("查询交易详情...").start();
+        const result = await gatewayTransDetail(createGatewayApiClient(auth.mcp_token), txHash);
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("tx-history")
+    .description("查询交易历史")
+    .option("--page <n>", "页码", "1")
+    .option("--limit <n>", "每页条数", "20")
+    .option("--start <time>", "开始时间 (Unix 秒)")
+    .option("--end <time>", "结束时间 (Unix 秒)")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth?.user_id) throw new Error("Not logged in. Run: login");
+        const spinner = ora("查询交易历史...").start();
+        const result = await gatewayTransList(createGatewayApiClient(auth.mcp_token), {
+          account_id: auth.user_id,
+          page_num: opts.page ? Number(opts.page) : 1,
+          page_size: opts.limit ? Number(opts.limit) : 20,
+          start_time: opts.start,
+          end_time: opts.end,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("swap-history")
+    .description("查询 Swap/Bridge 交易历史")
+    .option("--page <n>", "页码", "1")
+    .option("--limit <n>", "每页条数", "20")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth?.user_id) throw new Error("Not logged in. Run: login");
+        const spinner = ora("查询 Swap 历史...").start();
+        const result = await createSwapApiClient().swapHistory({
+          accountId: auth.user_id,
+          pageNum: opts.page ? Number(opts.page) : 1,
+          pageSize: opts.limit ? Number(opts.limit) : 20,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("sol-tx")
+    .description("构建 Solana 未签名转账交易（本地，使用最新 blockhash）")
+    .option("--from <address>", "发送方地址（默认自动获取）")
+    .option("--to <address>", "收款地址")
+    .option("--amount <amount>", "金额 (SOL)")
+    .option("--priority-fee <microLamports>", "优先费（micro-lamports/CU）")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        if (!auth.user_id) throw new Error("user_id not found, please re-login");
+        if (!opts.to || !opts.amount) throw new Error("--to 和 --amount 必填");
+
+        let from = opts.from;
+        if (!from) {
+          from = auth.sol_address ?? "";
+          if (!from) throw new Error(`未找到 SOL 钱包地址，请重新登录: pnpm cli login`);
+        }
+
+        const spinner = ora("构建 Solana 未签名交易...").start();
+        const result = await buildSolUnsigned({
+          from,
+          to: opts.to,
+          amount: opts.amount,
+          priorityFeeMicroLamports: opts.priorityFee ? BigInt(opts.priorityFee) : 0n,
+          mcpToken: auth.mcp_token,
+        });
+        spinner.succeed("构建成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
 
   // ─── Market ──────────────────────────────────────────────
-  shortcut(
-    "kline",
-    "查询 K 线数据",
-    "dex_market_get_kline",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.address) args.token_address = opts.address;
-      if (opts.period) args.period = opts.period;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名 (eth/bsc/solana...)"],
-      ["--address <addr>", "Token 合约地址"],
-      ["--period <period>", "时间周期 (1m/5m/1h/4h/1d)", "1h"],
-    ],
-  );
-  shortcut(
-    "liquidity",
-    "查询流动性池事件",
-    "dex_market_get_pair_liquidity",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.address) args.token_address = opts.address;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--address <addr>", "Token 合约地址"],
-    ],
-  );
-  shortcut(
-    "tx-stats",
-    "查询交易量统计 (5m/1h/4h/24h)",
-    "dex_market_get_tx_stats",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.address) args.token_address = opts.address;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--address <addr>", "Token 合约地址"],
-    ],
-  );
-  shortcut(
-    "swap-tokens",
-    "查询链上可兑换 Token 列表",
-    "dex_token_list_swap_tokens",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.search) args.search = opts.search;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--search <keyword>", "搜索关键词 (symbol/address)"],
-    ],
-  );
-  shortcut(
-    "bridge-tokens",
-    "查询跨链桥目标 Token",
-    "dex_token_list_cross_chain_bridge_tokens",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.srcChain) args.source_chain = opts.srcChain;
-      if (opts.destChain) args.chain = opts.destChain;
-      if (opts.token) args.source_address = opts.token;
-      return args;
-    },
-    [
-      ["--src-chain <chain>", "源链"],
-      ["--dest-chain <chain>", "目标链"],
-      ["--token <address>", "源 Token 地址"],
-    ],
-  );
+  program
+    .command("kline")
+    .description("查询 K 线数据")
+    .option("--chain <chain>", "链名 (eth/bsc/solana...)")
+    .option("--address <addr>", "Token 合约地址")
+    .option("--period <period>", "时间周期 (1m/5m/1h/4h/1d)", "1h")
+    .option("--pair <addr>", "交易对地址 (可选)")
+    .option("--limit <n>", "返回条数", "100")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询 K 线数据...").start();
+        const client = createMarketTradeClient();
+        const result = await client.getKline({
+          chain: opts.chain ?? "",
+          tokenAddress: opts.address ?? "",
+          period: opts.period ?? "1h",
+          pairAddress: opts.pair,
+          limit: opts.limit ? Number(opts.limit) : undefined,
+        });
+        spinner.succeed(`查询成功 (${result.length} 条)`);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("liquidity")
+    .description("查询流动性池事件")
+    .option("--chain <chain>", "链名")
+    .option("--address <addr>", "Token 合约地址")
+    .option("--pair <addr>", "交易对地址 (可选)")
+    .option("--page <n>", "页码", "1")
+    .option("--size <n>", "每页条数", "20")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询流动性池事件...").start();
+        const client = createMarketTradeClient();
+        const result = await client.getPairLiquidity({
+          chain: opts.chain ?? "",
+          tokenAddress: opts.address ?? "",
+          pairAddress: opts.pair,
+          pageIndex: opts.page ? Number(opts.page) : undefined,
+          pageSize: opts.size ? Number(opts.size) : undefined,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("tx-stats")
+    .description("查询交易量统计 (5m/1h/4h/24h)")
+    .option("--chain <chain>", "链名")
+    .option("--address <addr>", "Token 合约地址")
+    .option("--pair <addr>", "交易对地址 (可选)")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询交易量统计...").start();
+        const client = createMarketTradeClient();
+        const result = await client.getVolumeStats({
+          chain: opts.chain ?? "",
+          tokenAddress: opts.address ?? "",
+          pairAddress: opts.pair,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("swap-tokens")
+    .description("查询链上可兑换 Token 列表")
+    .option("--chain <chain>", "链名 (eth/bsc/solana...)")
+    .option("--search <keyword>", "搜索关键词 (symbol/address)")
+    .option("--tag <tag>", "列表类型: favorite | recommend")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询 Token 列表...").start();
+        const client = createMarketApiClient();
+        const result = await client.listSwapBridgeTokens({
+          chain: opts.chain,
+          search: opts.search,
+          tag: opts.tag,
+        });
+        spinner.succeed(`查询成功 (${result.tokens.length} tokens)`);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("bridge-tokens")
+    .description("查询跨链桥目标 Token")
+    .option("--src-chain <chain>", "源链 (eth/bsc/solana...)")
+    .option("--dest-chain <chain>", "目标链")
+    .option("--token <address>", "源 Token 合约地址")
+    .option("--search <keyword>", "搜索关键词")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询跨链桥 Token...").start();
+        const client = createMarketApiClient();
+        const result = await client.listSwapBridgeTokens({
+          sourceChain: opts.srcChain,
+          chain: opts.destChain,
+          sourceAddress: opts.token,
+          search: opts.search,
+        });
+        spinner.succeed(`查询成功 (${result.tokens.length} tokens)`);
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
 
   // ─── Token ───────────────────────────────────────────────
-  shortcut(
-    "token-info",
-    "查询 Token 详情 (价格/市值/持仓分布)",
-    "dex_token_get_coin_info",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.address) args.address = opts.address;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--address <addr>", "Token 合约地址"],
-    ],
-  );
-  shortcut(
-    "token-risk",
-    "查询 Token 安全审计信息",
-    "dex_token_get_risk_info",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.address) args.address = opts.address;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--address <addr>", "Token 合约地址"],
-    ],
-  );
-  shortcut(
-    "token-rank",
-    "Token 涨跌幅排行榜 (24h)",
-    "dex_token_ranking",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.limit) args.limit = Number(opts.limit);
-      if (opts.direction) args.direction = opts.direction;
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--limit <n>", "Top N", "10"],
-      ["--direction <dir>", "desc (涨幅) | asc (跌幅)", "desc"],
-    ],
-  );
-  shortcut(
-    "new-tokens",
-    "按创建时间筛选新 Token",
-    "dex_token_get_coins_range_by_created_at",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain;
-      if (opts.start) args.start = opts.start;
-      args.end = opts.end ?? new Date().toISOString();
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--start <time>", "开始时间 (RFC3339, 如 2026-03-08T00:00:00Z)"],
-      ["--end <time>", "结束时间 (RFC3339)"],
-    ],
-  );
+  program
+    .command("token-info")
+    .description("查询 Token 详情 (价格/市值/持仓分布)")
+    .option("--chain <chain>", "链名")
+    .option("--address <addr>", "Token 合约地址")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询 Token 详情...").start();
+        const client = createDataApiClient();
+        const result = await client.tokenQuery({
+          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          address: opts.address ? { eq: opts.address } : undefined,
+          limit: 1,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("token-risk")
+    .description("查询 Token 安全审计信息")
+    .option("--chain <chain>", "链名")
+    .option("--address <addr>", "Token 合约地址")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询安全审计信息...").start();
+        const client = createDataApiClient();
+        const result = await client.getSecurityRiskInfos(opts.chain ?? "", opts.address ?? "");
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("token-rank")
+    .description("Token 涨跌幅排行榜 (24h)")
+    .option("--chain <chain>", "链名")
+    .option("--limit <n>", "Top N", "10")
+    .option("--direction <dir>", "desc (涨幅) | asc (跌幅)", "desc")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询排行榜...").start();
+        const client = createDataApiClient();
+        const limit = opts.limit ? Number(opts.limit) : 10;
+        const direction = (opts.direction ?? "desc") as "asc" | "desc";
+        const result = await client.tokenQuery({
+          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          sort: [{ field: "trend_info.price_change_24h", order: direction }],
+          limit,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
+  program
+    .command("new-tokens")
+    .description("按创建时间筛选新 Token")
+    .option("--chain <chain>", "链名")
+    .option("--start <time>", "开始时间 (RFC3339, 如 2026-03-08T00:00:00Z)")
+    .option("--end <time>", "结束时间 (RFC3339)")
+    .option("--limit <n>", "返回条数", "20")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const spinner = ora("查询新 Token...").start();
+        const client = createDataApiClient();
+        const end = opts.end ?? new Date().toISOString();
+        const result = await client.tokenQuery({
+          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          created_at: opts.start ? { range: { start: opts.start, end } } : undefined,
+          sort: [{ field: "created_at", order: "desc" }],
+          limit: opts.limit ? Number(opts.limit) : 20,
+        });
+        spinner.succeed("查询成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
+      }
+    });
 
   // ─── Chain / RPC ─────────────────────────────────────────
-  shortcut(
-    "chain-config",
-    "查询链配置 (networkKey, endpoint, chainID)",
-    "dex_chain_config",
-    (_opts, pos) => (pos[0] ? { chain: pos[0].toUpperCase() } : {}),
-    undefined,
-    "[chain]",
-  );
-  shortcut(
-    "rpc",
-    "执行 JSON-RPC 调用 (eth_blockNumber, eth_getBalance...)",
-    "dex_rpc_call",
-    (opts) => {
-      const args: Record<string, unknown> = {};
-      if (opts.chain) args.chain = opts.chain.toUpperCase();
-      if (opts.method) args.method = opts.method;
-      if (opts.params) {
-        try {
-          args.params = JSON.parse(opts.params);
-        } catch {
-          args.params = opts.params;
+  program
+    .command("chain-config")
+    .description("查询链配置 (networkKey, endpoint, chainID)")
+    .argument("[chain]", "链名过滤 (不填返回全部)")
+    .action(async function (this: Command, chain?: string) {
+      try {
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        const spinner = ora("查询链配置...").start();
+        const data = await gatewayChainConfig(createGatewayApiClient(auth.mcp_token)) as {
+          network?: Record<string, unknown>;
+          [k: string]: unknown;
+        };
+        spinner.succeed("查询成功");
+        if (chain) {
+          const key = chain.toUpperCase();
+          const match = data.network?.[key];
+          console.log(JSON.stringify(match ?? { error: `chain ${key} not found` }, null, 2));
+        } else {
+          console.log(JSON.stringify(data, null, 2));
         }
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
       }
-      return args;
-    },
-    [
-      ["--chain <chain>", "链名"],
-      ["--method <method>", "RPC 方法 (eth_blockNumber...)"],
-      ["--params <json>", "参数 JSON 数组"],
-    ],
-  );
-}
-
-// ─── MCP Device Flow 登录 ────────────────────────────────
-
-async function loginWithDeviceFlow(
-  mcp: GateMcpClient,
-  serverUrl: string,
-  isGoogle: boolean,
-  provider: string,
-) {
-  const loginSpinner = ora(`Starting ${provider} OAuth login...`).start();
-
-  let startResult;
-  try {
-    startResult = isGoogle
-      ? await mcp.authGoogleLoginStart()
-      : await mcp.authGateLoginStart();
-  } catch (err) {
-    loginSpinner.fail(`Failed to start device flow: ${(err as Error).message}`);
-    return;
-  }
-
-  const parsed = parseToolResult<{
-    flow_id?: string;
-    verification_url?: string;
-    user_code?: string;
-    expires_in?: number;
-    interval?: number;
-  }>(startResult);
-
-  if (!parsed?.verification_url || !parsed?.flow_id) {
-    loginSpinner.fail("Failed to start login flow (invalid response)");
-    return;
-  }
-
-  loginSpinner.succeed("Login flow started");
-
-  if (parsed.user_code) {
-    console.log(chalk.gray(`  Code: ${parsed.user_code}`));
-  }
-
-  const opened = await openBrowser(parsed.verification_url);
-  if (opened) {
-    console.log(chalk.green("  ✔ Browser opened — please authorize there."));
-  }
-
-  const pollSpinner = ora("Waiting for authorization...").start();
-  const intervalMs = (parsed.interval ?? 5) * 1000;
-  const deadline = Date.now() + (parsed.expires_in ?? 1800) * 1000;
-
-  let cancelled = false;
-  const onSigint = () => {
-    cancelled = true;
-  };
-  process.once("SIGINT", onSigint);
-
-  while (Date.now() < deadline && !cancelled) {
-    await sleep(intervalMs);
-
-    try {
-      const pollResult = isGoogle
-        ? await mcp.authGoogleLoginPoll(parsed.flow_id)
-        : await mcp.authGateLoginPoll(parsed.flow_id);
-
-      const poll = parseToolResult<{
-        status: string;
-        access_token?: string;
-        mcp_token?: string;
-        user_id?: string;
-        error?: string;
-        expires_in?: number;
-      }>(pollResult);
-
-      if (!poll) continue;
-
-      if (poll.status === "ok") {
-        const token = poll.access_token ?? poll.mcp_token;
-        if (token) {
-          mcp.setMcpToken(token);
-          process.removeListener("SIGINT", onSigint);
-          pollSpinner.succeed("Login successful!");
-
-          saveAuth({
-            mcp_token: token,
-            provider: isGoogle ? "google" : "gate",
-            user_id: poll.user_id,
-            expires_at: poll.expires_in
-              ? Date.now() + poll.expires_in * 1000
-              : Date.now() + 30 * 86_400_000,
-            env: "default",
-            server_url: serverUrl,
-          });
-
-          console.log();
-          if (poll.user_id)
-            console.log(chalk.green(`  User ID: ${poll.user_id}`));
-          console.log(chalk.green(`  Wallet: custodial (${provider})`));
-          console.log(chalk.gray(`  Token saved to ${getAuthFilePath()}`));
-
-          await reportWalletAddresses(mcp);
-          return;
+    });
+  program
+    .command("rpc")
+    .description("执行 JSON-RPC 调用 (eth_blockNumber, eth_getBalance...)")
+    .option("--chain <chain>", "链名 (ETH/BSC/SOL...)")
+    .option("--method <method>", "RPC 方法 (eth_blockNumber...)")
+    .option("--params <json>", "参数 JSON 数组")
+    .action(async function (this: Command, opts: Record<string, string | undefined>) {
+      try {
+        const chain = (opts.chain ?? "ETH").toUpperCase();
+        let params: unknown[] = [];
+        if (opts.params) {
+          try {
+            params = JSON.parse(opts.params) as unknown[];
+          } catch {
+            params = [opts.params];
+          }
         }
+        const auth = loadAuth();
+        if (!auth) throw new Error("Not logged in. Run: login");
+        const spinner = ora(`RPC ${opts.method ?? ""}...`).start();
+        const result = await gatewayRpcCall(createGatewayApiClient(auth.mcp_token), {
+          chain,
+          method: opts.method ?? "",
+          params,
+        });
+        spinner.succeed("RPC 调用成功");
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error(chalk.red((err as Error).message));
       }
-
-      if (poll.status === "error") {
-        process.removeListener("SIGINT", onSigint);
-        pollSpinner.fail(`Login failed: ${poll.error ?? "Unknown error"}`);
-        return;
-      }
-    } catch {
-      // poll 请求失败，继续轮询
-    }
-  }
-
-  process.removeListener("SIGINT", onSigint);
-  pollSpinner.fail(cancelled ? "Login cancelled" : "Login timed out");
+    });
 }
 
 // ─── Google OAuth 登录（REST API + 服务端回调）─────────────
@@ -1466,28 +1500,32 @@ interface DeviceStartResponse {
 
 interface DevicePollResponse {
   status: string;
-  access_token?: string;
   mcp_token?: string;
   user_id?: string;
+  account_id?: string;
+  evm_address?: string;
+  sol_address?: string;
   wallet_address?: string;
+  wallets?: Array<{ wallet_address: string; chain: string }>;
   expires_in?: number;
   error?: string;
 }
 
-async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
-  const baseUrl = mcp.getServerBaseUrl();
-  const callbackUrl = `${baseUrl}/oauth/google/device/callback`;
+async function loginGoogleViaRest(noOpen = false) {
+  const baseUrl = getBizWalletUrl();
+  const callbackUrl = `${baseUrl}/v1/wallet/oauth/google/device/callback`;
   const loginSpinner = ora("Starting Google OAuth login...").start();
 
   // 1. 通过 REST API 启动 Google OAuth device flow
   let flowData: DeviceStartResponse;
   try {
-    const res = await fetch(`${baseUrl}/oauth/google/device/start`, {
+    const res = await fetch(`${baseUrl}/v1/wallet/oauth/google/device/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": buildUserAgent(),
         "x-gtweb3-device-token": getOrCreateDeviceToken(),
+        "x-gtweb3-app-id": getBwAppId(),
         "source": "3",
       },
       body: JSON.stringify({}),
@@ -1540,9 +1578,14 @@ async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
     console.log(chalk.gray(`  Code: ${flowData.user_code}`));
   }
 
-  const opened = await openBrowser(authUrl);
-  if (opened) {
-    console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+  if (noOpen) {
+    console.log(chalk.bold("  Authorization URL:"));
+    console.log(chalk.cyan(authUrl));
+  } else {
+    const opened = await openBrowser(authUrl);
+    if (opened) {
+      console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+    }
   }
 
   // 4. 轮询等待结果
@@ -1551,21 +1594,22 @@ async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
   const deadline = Date.now() + (flowData.expires_in ?? 1800) * 1000;
 
   let cancelled = false;
-  const onSigint = () => {
-    cancelled = true;
-  };
+  const abortCtrl = new AbortController();
+  const onSigint = () => { cancelled = true; abortCtrl.abort(); pollSpinner.stop(); process.exit(0); };
   process.once("SIGINT", onSigint);
 
   while (Date.now() < deadline && !cancelled) {
-    await sleep(intervalMs);
+    await sleep(intervalMs, abortCtrl.signal);
+    if (cancelled) break;
 
     try {
-      const res = await fetch(`${baseUrl}/oauth/google/device/poll`, {
+      const res = await fetch(`${baseUrl}/v1/wallet/oauth/google/device/poll`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "User-Agent": buildUserAgent(),
           "x-gtweb3-device-token": getOrCreateDeviceToken(),
+          "x-gtweb3-app-id": getBwAppId(),
           "source": "3",
         },
         body: JSON.stringify({ flow_id: flowId }),
@@ -1576,21 +1620,21 @@ async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
       const poll = (await res.json()) as DevicePollResponse;
 
       if (poll.status === "ok") {
-        const token = poll.access_token ?? poll.mcp_token;
-        if (token) {
-          mcp.setMcpToken(token);
+        if (poll.mcp_token) {
           process.removeListener("SIGINT", onSigint);
           pollSpinner.succeed("Google login successful!");
 
           saveAuth({
-            mcp_token: token,
+            mcp_token: poll.mcp_token,
             provider: "google",
             user_id: poll.user_id,
+            account_id: poll.account_id,
+            evm_address: poll.evm_address,
+            sol_address: poll.sol_address,
             expires_at: poll.expires_in
               ? Date.now() + poll.expires_in * 1000
               : Date.now() + 30 * 86_400_000,
             env: "default",
-            server_url: serverUrl,
           });
 
           console.log();
@@ -1601,7 +1645,6 @@ async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
           console.log(chalk.green(`  Provider: Google`));
           console.log(chalk.gray(`  Token saved to ${getAuthFilePath()}`));
 
-          await reportWalletAddresses(mcp);
           return;
         }
       }
@@ -1624,18 +1667,19 @@ async function loginGoogleViaRest(mcp: GateMcpClient, serverUrl: string) {
 
 // ─── Gate OAuth 登录（REST API + 服务端回调）──────────────
 
-async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
-  const baseUrl = mcp.getServerBaseUrl();
+async function loginGateViaRest(noOpen = false) {
+  const baseUrl = getBizWalletUrl();
   const loginSpinner = ora("Starting Gate OAuth login...").start();
 
   let flowData: DeviceStartResponse;
   try {
-    const res = await fetch(`${baseUrl}/oauth/gate/device/start`, {
+    const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/start`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": buildUserAgent(),
         "x-gtweb3-device-token": getOrCreateDeviceToken(),
+        "x-gtweb3-app-id": getBwAppId(),
         "source": "3",
       },
       body: JSON.stringify({}),
@@ -1670,9 +1714,14 @@ async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
     console.log(chalk.gray(`  Code: ${flowData.user_code}`));
   }
 
-  const opened = await openBrowser(flowData.verification_url);
-  if (opened) {
-    console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+  if (noOpen) {
+    console.log(chalk.bold("  Authorization URL:"));
+    console.log(chalk.cyan(flowData.verification_url));
+  } else {
+    const opened = await openBrowser(flowData.verification_url);
+    if (opened) {
+      console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+    }
   }
 
   const pollSpinner = ora("Waiting for Gate authorization...").start();
@@ -1680,21 +1729,22 @@ async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
   const deadline = Date.now() + (flowData.expires_in ?? 1800) * 1000;
 
   let cancelled = false;
-  const onSigint = () => {
-    cancelled = true;
-  };
+  const abortCtrl = new AbortController();
+  const onSigint = () => { cancelled = true; abortCtrl.abort(); pollSpinner.stop(); process.exit(0); };
   process.once("SIGINT", onSigint);
 
   while (Date.now() < deadline && !cancelled) {
-    await sleep(intervalMs);
+    await sleep(intervalMs, abortCtrl.signal);
+    if (cancelled) break;
 
     try {
-      const res = await fetch(`${baseUrl}/oauth/gate/device/poll`, {
+      const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/poll`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "User-Agent": buildUserAgent(),
           "x-gtweb3-device-token": getOrCreateDeviceToken(),
+          "x-gtweb3-app-id": getBwAppId(),
           "source": "3",
         },
         body: JSON.stringify({ flow_id: flowData.flow_id }),
@@ -1705,21 +1755,21 @@ async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
       const poll = (await res.json()) as DevicePollResponse;
 
       if (poll.status === "ok") {
-        const token = poll.access_token ?? poll.mcp_token;
-        if (token) {
-          mcp.setMcpToken(token);
+        if (poll.mcp_token) {
           process.removeListener("SIGINT", onSigint);
           pollSpinner.succeed("Gate login successful!");
 
           saveAuth({
-            mcp_token: token,
+            mcp_token: poll.mcp_token,
             provider: "gate",
             user_id: poll.user_id,
+            account_id: poll.account_id,
+            evm_address: poll.evm_address,
+            sol_address: poll.sol_address,
             expires_at: poll.expires_in
               ? Date.now() + poll.expires_in * 1000
               : Date.now() + 30 * 86_400_000,
             env: "default",
-            server_url: serverUrl,
           });
 
           console.log();
@@ -1730,7 +1780,6 @@ async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
           console.log(chalk.green(`  Provider: Gate`));
           console.log(chalk.gray(`  Token saved to ${getAuthFilePath()}`));
 
-          await reportWalletAddresses(mcp);
           return;
         }
       }
@@ -1749,132 +1798,11 @@ async function loginGateViaRest(mcp: GateMcpClient, serverUrl: string) {
   pollSpinner.fail(cancelled ? "Login cancelled" : "Login timed out");
 }
 
-// ─── 工具函数 ────────────────────────────────────────────
-
-function parseToolResult<T>(
-  result: Awaited<ReturnType<GateMcpClient["callTool"]>>,
-): T | null {
-  if ("content" in result && Array.isArray(result.content)) {
-    const text = (
-      result.content as Array<{ type: string; text?: string }>
-    ).find(
-      (c): c is { type: "text"; text: string } =>
-        c.type === "text" && typeof c.text === "string",
-    );
-    if (text) {
-      try {
-        return JSON.parse(text.text) as T;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
-const B58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-function b58ToB64(b58: string): string {
-  let n = BigInt(0);
-  for (const ch of b58) {
-    n = n * 58n + BigInt(B58_ALPHABET.indexOf(ch));
-  }
-  const hex = n.toString(16).padStart(2, "0");
-  const bytes = Buffer.from(hex.length % 2 ? "0" + hex : hex, "hex");
-  let pad = 0;
-  for (const ch of b58) {
-    if (ch === "1") pad++;
-    else break;
-  }
-  const result = Buffer.concat([Buffer.alloc(pad), bytes]);
-  return result.toString("base64");
-}
-
-// ─── 登录后自动上报钱包地址 ──────────────────────────────
-
-interface WalletAddresses {
-  account_id?: string;
-  addresses?: Record<string, string>;
-}
-
-interface AgenticChainAddress {
-  networkKey: string;
-  accountKey?: string;
-  chains: string;
-  accountFormat?: string;
-  chainAddress: string;
-}
-
-const CHAIN_ADDRESS_MAP: Record<
-  string,
-  Omit<AgenticChainAddress, "chainAddress">
-> = {
-  EVM: {
-    networkKey: "ETH",
-    accountKey: "ETH",
-    chains: "ETH,ARB,OP,BASE,LINEA,SCROLL,ZKSYNC",
-    accountFormat: "",
-  },
-  SOL: {
-    networkKey: "SOL",
-    chains: "SOL",
-  },
-};
-
-async function reportWalletAddresses(mcp: GateMcpClient): Promise<void> {
-  const reportSpinner = ora("Reporting wallet addresses...").start();
-
-  try {
-    const addrResult = await mcp.callTool("dex_wallet_get_addresses");
-    const addrData = parseToolResult<WalletAddresses>(addrResult);
-
-    if (!addrData?.addresses || Object.keys(addrData.addresses).length === 0) {
-      reportSpinner.warn("No wallet addresses to report");
-      return;
-    }
-
-    const chainAddressList: AgenticChainAddress[] = Object.entries(
-      addrData.addresses,
-    )
-      .map(([chainType, address]) => {
-        const meta = CHAIN_ADDRESS_MAP[chainType];
-        if (!meta) return null;
-        return { ...meta, chainAddress: address };
-      })
-      .filter((item): item is AgenticChainAddress => item !== null);
-
-    if (chainAddressList.length === 0) {
-      reportSpinner.warn("No supported chains to report");
-      return;
-    }
-
-    const wallets = [
-      {
-        accounts: [{ chainAddressList }],
-      },
-    ];
-
-    const reportResult = await mcp.callTool("dex_agentic_report", { wallets });
-    const report = parseToolResult<{
-      wallets?: Array<{ walletID: string; accountID: string[] }>;
-    }>(reportResult);
-
-    if (report?.wallets?.length) {
-      reportSpinner.succeed(
-        `Wallet addresses reported (${chainAddressList.length} chains)`,
-      );
-      for (const w of report.wallets) {
-        console.log(chalk.gray(`  walletID: ${w.walletID}`));
-      }
-    } else {
-      reportSpinner.warn("Wallet report returned empty result");
-    }
-  } catch (err) {
-    reportSpinner.warn(`Wallet report failed: ${(err as Error).message}`);
-  }
-}
