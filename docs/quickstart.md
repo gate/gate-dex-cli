@@ -24,6 +24,11 @@ gate-wallet status             # check auth status
 
 Token is saved to `~/.gate-wallet/auth.json` and valid for 30 days.
 
+> **Third-party injection**: If another tool writes `auth.json` directly, point the CLI at it with `--auth-file`:
+> ```bash
+> gate-wallet --auth-file /path/to/auth.json status
+> ```
+
 ## Basic usage
 
 ```bash

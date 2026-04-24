@@ -62,6 +62,19 @@ Or configure manually:
 | `~/.gate-wallet/auth.json`        | OAuth token (auto-generated) |
 | `~/.gate-wallet/openapi.json`     | OpenAPI AK/SK credentials    |
 
+### Custom auth file path
+
+Use `--auth-file` to point the CLI at an `auth.json` written by a third party (no login flow needed):
+
+```bash
+gate-wallet --auth-file /path/to/auth.json status
+gate-wallet --auth-file /path/to/auth.json balance
+```
+
+Or set the env variable: `GATE_WALLET_AUTH_FILE=/path/to/auth.json gate-wallet balance`
+
+`--auth-file` takes precedence over `--auth-dir` / `GATE_WALLET_HOME`.
+
 Create your AK/SK at [Gate Web3 API Management](https://web3.gate.com/zh/api-manage).
 
 ## Usage examples

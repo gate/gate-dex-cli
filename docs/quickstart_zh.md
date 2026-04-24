@@ -24,6 +24,11 @@ gate-wallet status             # 查看登录状态
 
 Token 自动保存到 `~/.gate-wallet/auth.json`，30 天有效，无需重复登录。
 
+> **三方注入**：如果由其他工具直接写入 `auth.json`，可通过 `--auth-file` 指定路径，无需走登录流程：
+> ```bash
+> gate-wallet --auth-file /path/to/auth.json status
+> ```
+
 ## 基本用法
 
 ```bash

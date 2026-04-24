@@ -65,13 +65,18 @@ function loadEnvWalkingUpFromCwd(): void {
   }
 }
 
-// 提前从 argv 提取 --auth-dir，使后续所有 loadAuth/saveAuth 都使用自定义路径
+// 提前从 argv 提取 --auth-dir / --auth-file，使后续所有 loadAuth/saveAuth 都使用自定义路径
 (function applyAuthDirFromArgv() {
   const args = process.argv.slice(2);
-  const idx = args.findIndex((a) => a === "--auth-dir");
-  const authDirArg = args[idx + 1];
-  if (idx !== -1 && authDirArg) {
+  const dirIdx = args.findIndex((a) => a === "--auth-dir");
+  const authDirArg = args[dirIdx + 1];
+  if (dirIdx !== -1 && authDirArg) {
     process.env["GATE_WALLET_HOME"] = resolve(authDirArg);
+  }
+  const fileIdx = args.findIndex((a) => a === "--auth-file");
+  const authFileArg = args[fileIdx + 1];
+  if (fileIdx !== -1 && authFileArg) {
+    process.env["GATE_WALLET_AUTH_FILE"] = resolve(authFileArg);
   }
 })();
 
@@ -88,7 +93,8 @@ program
   .name("gate-wallet")
   .description("Gate Wallet CLI - MCP Custodial Wallet")
   .version(pkg.version, "-v, --version")
-  .option("--auth-dir <path>", "Custom auth storage directory (overrides ~/.gate-wallet, also via GATE_WALLET_HOME env)");
+  .option("--auth-dir <path>", "Custom auth storage directory (overrides ~/.gate-wallet, also via GATE_WALLET_HOME env)")
+  .option("--auth-file <path>", "Custom auth.json file path (overrides --auth-dir, also via GATE_WALLET_AUTH_FILE env)");
 
 registerAuthCommands(program);
 registerShortcutCommands(program);

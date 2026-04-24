@@ -58,7 +58,7 @@ export function getAuthDir(): string {
 }
 
 function getAuthFile(): string {
-  return join(getAuthDir(), "auth.json");
+  return process.env["GATE_WALLET_AUTH_FILE"] ?? join(getAuthDir(), "auth.json");
 }
 
 function getDeviceFile(): string {
