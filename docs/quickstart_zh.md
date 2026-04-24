@@ -8,76 +8,60 @@
 
 ```bash
 # 方式一：npm 全局安装（推荐）
-npm install -g gate-wallet-cli
+npm install -g gate-dex-cli
 
 # 方式二：npx 免安装运行
-npx gate-wallet-cli login
+npx gate-dex-cli login
 ```
 
 ## 登录
 
 ```bash
-gate-wallet login              # Gate OAuth 登录（浏览器授权）
-gate-wallet login --google     # Google OAuth 登录
-gate-wallet status             # 查看登录状态
+gate-dex login              # Gate OAuth 登录（浏览器授权）
+gate-dex login --google     # Google OAuth 登录
+gate-dex status             # 查看登录状态
 ```
 
-Token 自动保存到 `~/.gate-wallet/auth.json`，30 天有效，无需重复登录。
+Token 自动保存到 `~/.gate-dex/auth.json`，30 天有效，无需重复登录。
 
 > **三方注入**：如果由其他工具直接写入 `auth.json`，可通过 `--auth-file` 指定路径，无需走登录流程：
 > ```bash
-> gate-wallet --auth-file /path/to/auth.json status
+> gate-dex --auth-file /path/to/auth.json status
 > ```
 
 ## 基本用法
 
 ```bash
 # 钱包查询
-gate-wallet balance            # 查询总资产余额
-gate-wallet address            # 查询各链钱包地址（EVM / SOL）
-gate-wallet tokens             # 查询 Token 列表和余额
+gate-dex balance            # 查询总资产余额
+gate-dex address            # 查询各链钱包地址（EVM / SOL）
+gate-dex tokens             # 查询 Token 列表和余额
 
 # 一键转账
-gate-wallet send --chain ETH --to 0x... --amount 0.0001
-gate-wallet send --chain SOL --to <address> --amount 0.001
+gate-dex send --chain ETH --to 0x... --amount 0.0001
+gate-dex send --chain SOL --to <address> --amount 0.001
 
 # Swap 兑换（ETH → USDT）
-gate-wallet swap --from-chain 1 --from - --to 0xdAC17F958D2ee523a2206206994597C13D831ec7 --amount 0.01 --native-in 1
+gate-dex swap --from-chain 1 --from - --to 0xdAC17F958D2ee523a2206206994597C13D831ec7 --amount 0.01 --native-in 1
 
 # Gas 费用查询
-gate-wallet gas ETH
-gate-wallet gas SOL
+gate-dex gas ETH
+gate-dex gas SOL
 ```
-
-## OpenAPI 通道（免登录）
-
-```bash
-# 配置 AK/SK
-gate-wallet openapi-config --set-ak YOUR_AK --set-sk YOUR_SK
-
-# Hybrid Swap（OpenAPI 报价构建 + MCP 托管签名）
-gate-wallet openapi-swap --chain ARB --from - --to 0xFd08... --amount 0.00001
-
-# 行情数据
-gate-wallet openapi-token-rank --chain eth --limit 10
-gate-wallet openapi-token-risk --chain eth --address 0x...
-```
-
-前往 [Gate Web3 API 管理](https://web3.gate.com/zh/api-manage) 创建 AK/SK。
 
 ## 交互模式
 
 ```bash
-gate-wallet                    # 进入交互模式
+gate-dex                    # 进入交互模式
 ```
 
 ```
-Gate Wallet CLI - Interactive Mode
+Gate Dex CLI - Interactive Mode
 Type 'login' to start, 'help' for all commands, 'exit' to quit.
 
-gate-wallet> login
-gate-wallet> balance
-gate-wallet> exit
+gate-dex> login
+gate-dex> balance
+gate-dex> exit
 ```
 
 ## 更多

@@ -1,11 +1,11 @@
 {
-  "name": "gate-wallet-cli",
+  "name": "gate-dex-cli",
   "version": "2.0.0",
-  "description": "Gate Wallet CLI - Custodial Wallet Management Tool",
+  "description": "Gate Dex CLI - Custodial Wallet Management Tool",
   "type": "module",
   "main": "dist/cli/index.js",
   "bin": {
-    "gate-wallet": "./bin/gate-wallet.js"
+    "gate-dex": "./bin/gate-dex.js"
   },
   "files": [
     "dist",
@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "cli": "tsx src/cli/index.ts",
-    "build": "tsc && chmod +x bin/gate-wallet.js",
+    "build": "tsc && chmod +x bin/gate-dex.js",
     "build:binary": "node scripts/build-binary.mjs",
     "dev": "tsx --watch src/cli/index.ts",
 
@@ -30,10 +30,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/gate/gate-wallet-cli.git",
+    "url": "https://github.com/gate/gate-dex-cli.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/gate/gate-wallet-cli#readme",
+  "homepage": "https://github.com/gate/gate-dex-cli#readme",
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=18"

@@ -13,7 +13,7 @@ if (envB64) {
 
 // 2. Provide package metadata so index.ts skips the readFileSync(package.json) call
 (globalThis as any).__BUNDLED_PKG__ = {
-  name: process.env.BUNDLED_PKG_NAME ?? "gate-wallet-cli",
+  name: process.env.BUNDLED_PKG_NAME ?? "gate-dex-cli",
   version: process.env.BUNDLED_PKG_VERSION ?? "dev",
 };
 

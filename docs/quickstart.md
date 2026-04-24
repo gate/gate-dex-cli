@@ -8,76 +8,60 @@
 
 ```bash
 # Option 1: npm global install (recommended)
-npm install -g gate-wallet-cli
+npm install -g gate-dex-cli
 
 # Option 2: npx (no install)
-npx gate-wallet-cli login
+npx gate-dex-cli login
 ```
 
 ## Login
 
 ```bash
-gate-wallet login              # Gate OAuth (opens browser)
-gate-wallet login --google     # Google OAuth
-gate-wallet status             # check auth status
+gate-dex login              # Gate OAuth (opens browser)
+gate-dex login --google     # Google OAuth
+gate-dex status             # check auth status
 ```
 
-Token is saved to `~/.gate-wallet/auth.json` and valid for 30 days.
+Token is saved to `~/.gate-dex/auth.json` and valid for 30 days.
 
 > **Third-party injection**: If another tool writes `auth.json` directly, point the CLI at it with `--auth-file`:
 > ```bash
-> gate-wallet --auth-file /path/to/auth.json status
+> gate-dex --auth-file /path/to/auth.json status
 > ```
 
 ## Basic usage
 
 ```bash
 # Wallet queries
-gate-wallet balance            # total asset balance
-gate-wallet address            # wallet addresses (EVM/SOL)
-gate-wallet tokens             # token list with balances
+gate-dex balance            # total asset balance
+gate-dex address            # wallet addresses (EVM/SOL)
+gate-dex tokens             # token list with balances
 
 # One-click transfer
-gate-wallet send --chain ETH --to 0x... --amount 0.0001
-gate-wallet send --chain SOL --to <address> --amount 0.001
+gate-dex send --chain ETH --to 0x... --amount 0.0001
+gate-dex send --chain SOL --to <address> --amount 0.001
 
 # Swap (ETH → USDT)
-gate-wallet swap --from-chain 1 --from - --to 0xdAC17F958D2ee523a2206206994597C13D831ec7 --amount 0.01 --native-in 1
+gate-dex swap --from-chain 1 --from - --to 0xdAC17F958D2ee523a2206206994597C13D831ec7 --amount 0.01 --native-in 1
 
 # Gas fees
-gate-wallet gas ETH
-gate-wallet gas SOL
+gate-dex gas ETH
+gate-dex gas SOL
 ```
-
-## OpenAPI channel (no login required)
-
-```bash
-# Configure AK/SK
-gate-wallet openapi-config --set-ak YOUR_AK --set-sk YOUR_SK
-
-# Hybrid Swap (OpenAPI quote/build + MCP signing)
-gate-wallet openapi-swap --chain ARB --from - --to 0xFd08... --amount 0.00001
-
-# Market data
-gate-wallet openapi-token-rank --chain eth --limit 10
-gate-wallet openapi-token-risk --chain eth --address 0x...
-```
-
-Get your AK/SK at [Gate Web3 API Management](https://web3.gate.com/zh/api-manage).
 
 ## Interactive REPL
 
 ```bash
-gate-wallet                    # enter interactive mode
+gate-dex                    # enter interactive mode
 ```
 
 ```
-Gate Wallet CLI - Interactive Mode
+Gate Dex CLI - Interactive Mode
 Type 'login' to start, 'help' for all commands, 'exit' to quit.
 
-gate-wallet> login
-gate-wallet> balance
-gate-wallet> exit
+gate-dex> login
+gate-dex> balance
+gate-dex> exit
 ```
 
 ## Next steps

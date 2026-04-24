@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build self-contained binaries for gate-wallet-cli via `bun build --compile`.
+ * Build self-contained binaries for gate-dex-cli via `bun build --compile`.
  *
  * Production mode (default):
  *   - Does NOT bake any .env values. Env is provided at runtime via GateClaw Web form
@@ -19,7 +19,7 @@
  *   node scripts/build-binary.mjs --bake-env --env-file /path/to/.env
  *
  * Output naming:
- *   dist/gate-wallet-<platform>-<arch>   e.g. dist/gate-wallet-linux-x64
+ *   dist/gate-dex-<platform>-<arch>   e.g. dist/gate-dex-linux-x64
  */
 
 import { execSync } from "child_process";
@@ -106,7 +106,7 @@ function targetToSuffix(t) {
 }
 
 for (const target of targets) {
-  const outFile = join(distDir, `gate-wallet-${targetToSuffix(target)}`);
+  const outFile = join(distDir, `gate-dex-${targetToSuffix(target)}`);
   const cmd = `bun build ${entryPoint} --compile --target=${target} --outfile ${outFile} ${defines}`;
 
   console.log(`\n[build] target=${target} → ${outFile}`);
@@ -115,5 +115,5 @@ for (const target of targets) {
 
 console.log(`\n✅ Done. Outputs in ${distDir}/`);
 for (const t of targets) {
-  console.log(`   gate-wallet-${targetToSuffix(t)}`);
+  console.log(`   gate-dex-${targetToSuffix(t)}`);
 }

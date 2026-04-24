@@ -1,7 +1,7 @@
 node_modules/
 .pnpm-store/
 dist/
-.gate-wallet/
+.gate-dex/
 *.env
 *.env.*
 # build 时从上级目录复制过来的，不需要提交

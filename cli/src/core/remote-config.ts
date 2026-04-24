@@ -7,7 +7,7 @@
  *   2. 并行 Ping 候选（GET {host}/v1/cdn/get-dynamic），找出第一个可用的
  *   3. 拉取 { code, data: { web3_domain: [{ host }] } }
  *   4. 对 web3_domain 做并行 speed test（GET {host}/speed_test），按响应时间排序
- *   5. 结果缓存到 ~/.gate-wallet/web3-domain.json，TTL = 5 分钟
+ *   5. 结果缓存到 ~/.gate-dex/web3-domain.json，TTL = 5 分钟
  *
  * 使用方式：
  *   const primary = await getPrimaryWeb3Domain();   // 最快的可用域名

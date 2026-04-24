@@ -1,12 +1,10 @@
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { Command } from "commander";
 import chalk from "chalk";
 import { registerAuthCommands, registerShortcutCommands } from "./auth.cmd.js";
-import { registerOpenApiCommands } from "./openapi.cmd.js";
 import { getAuthDir } from "../core/token-store.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -69,43 +67,39 @@ function loadEnvWalkingUpFromCwd(): void {
   const dirIdx = args.findIndex((a) => a === "--auth-dir");
   const authDirArg = args[dirIdx + 1];
   if (dirIdx !== -1 && authDirArg) {
-    process.env["GATE_WALLET_HOME"] = resolve(authDirArg);
+    process.env["GATE_DEX_HOME"] = resolve(authDirArg);
   }
   const fileIdx = args.findIndex((a) => a === "--auth-file");
   const authFileArg = args[fileIdx + 1];
   if (fileIdx !== -1 && authFileArg) {
-    process.env["GATE_WALLET_AUTH_FILE"] = resolve(authFileArg);
+    process.env["GATE_DEX_AUTH_FILE"] = resolve(authFileArg);
   }
 })();
 
-// 1) ~/.gate-wallet/.env（用户级默认，不覆盖已有 shell 变量）
+// 1) ~/.gate-dex/.env（用户级默认，不覆盖已有 shell 变量）
 loadEnvFile(join(getAuthDir(), ".env"), "fill");
 // 2) 相对「安装包」的上一级 .env（pnpm cli / 本地源码时往往是仓库根；全局安装时通常不存在）
 loadEnvFile(join(PKG_ROOT, "..", ".env"), "overrideNonShell");
-// 3) 自 cwd 向上的每一级 .env（全局 gate-wallet 在项目目录里执行时与 pnpm cli 行为一致）
+// 3) 自 cwd 向上的每一级 .env（全局 gate-dex 在项目目录里执行时与 pnpm cli 行为一致）
 loadEnvWalkingUpFromCwd();
 
 const program = new Command();
 
 program
-  .name("gate-wallet")
-  .description("Gate Wallet CLI - MCP Custodial Wallet")
+  .name("gate-dex")
+  .description("Gate Dex CLI - MCP Custodial Wallet")
   .version(pkg.version, "-v, --version")
-  .option("--auth-dir <path>", "Custom auth storage directory (overrides ~/.gate-wallet, also via GATE_WALLET_HOME env)")
-  .option("--auth-file <path>", "Custom auth.json file path (overrides --auth-dir, also via GATE_WALLET_AUTH_FILE env)");
+  .option("--auth-dir <path>", "Custom auth storage directory (overrides ~/.gate-dex, also via GATE_DEX_HOME env)")
+  .option("--auth-file <path>", "Custom auth.json file path (overrides --auth-dir, also via GATE_DEX_AUTH_FILE env)");
 
 registerAuthCommands(program);
 registerShortcutCommands(program);
-registerOpenApiCommands(program);
 
 program
   .command("cleanup")
-  .description("清理本地配置文件 (auth-dir, ~/.gate-dex-openapi)")
+  .description("清理本地配置文件 (auth-dir)")
   .action(() => {
-    const dirs = [
-      getAuthDir(),
-      join(homedir(), ".gate-dex-openapi"),
-    ];
+    const dirs = [getAuthDir()];
     for (const dir of dirs) {
       if (existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
@@ -146,7 +140,7 @@ if (hasSubcommand) {
     },
   });
 
-  console.log(chalk.bold("Gate Wallet CLI - Interactive Mode"));
+  console.log(chalk.bold("Gate Dex CLI - Interactive Mode"));
   console.log(
     chalk.gray(
       "Type 'login' to start, 'help' for all commands, 'exit' to quit.\n",
@@ -156,7 +150,7 @@ if (hasSubcommand) {
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.cyan("gate-wallet> "),
+    prompt: chalk.cyan("gate-dex> "),
   });
 
   rl.prompt();
@@ -183,7 +177,7 @@ if (hasSubcommand) {
     const argv = parseArgs(input);
 
     try {
-      await program.parseAsync(["node", "gate-wallet", ...argv]);
+      await program.parseAsync(["node", "gate-dex", ...argv]);
     } catch {
       // Commander 错误已由其内部处理
     }

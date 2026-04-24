@@ -260,7 +260,7 @@ export async function swapPrepare(
       routes: cloneJSON(quoteRaw),
     },
     extraData,
-    userAgent: "gate-wallet-cli",
+    userAgent: "gate-dex-cli",
     source: "cli",
   });
 
@@ -358,7 +358,7 @@ async function rebuildBuildResp(session: SwapSessionState): Promise<BuildV3Resp>
       routes: cloneJSON(session.quote_raw),
     },
     extraData,
-    userAgent: "gate-wallet-cli",
+    userAgent: "gate-dex-cli",
     source: "cli",
   });
   session.build_resp = buildResp;

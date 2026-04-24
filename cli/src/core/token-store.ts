@@ -1,5 +1,5 @@
 /**
- * Token 持久化 - 保存/读取 mcp_token 到 ~/.gate-wallet/auth.json
+ * Token 持久化 - 保存/读取 mcp_token 到 ~/.gate-dex/auth.json
  * 避免每次 CLI 启动都需要重新登录
  */
 
@@ -12,8 +12,8 @@ import { randomBytes } from "node:crypto";
 
 /**
  * 构建 CLI 设备 User-Agent
- * 格式：gate-wallet-cli/{version} (macOS {version}; {arch})
- * 示例：gate-wallet-cli/1.0.6 (macOS 26.2; arm64)
+ * 格式：gate-dex-cli/{version} (macOS {version}; {arch})
+ * 示例：gate-dex-cli/1.0.6 (macOS 26.2; arm64)
  */
 export function buildUserAgent(): string {
   const cpuArch = arch();
@@ -51,14 +51,14 @@ export function getBwAccessToken(auth: StoredAuth): string {
 
 /**
  * 返回 auth 存储目录。
- * 优先级：--auth-dir CLI 选项（通过 GATE_WALLET_HOME env）> ~/.gate-wallet
+ * 优先级：--auth-dir CLI 选项（通过 GATE_DEX_HOME env）> ~/.gate-dex
  */
 export function getAuthDir(): string {
-  return process.env["GATE_WALLET_HOME"] ?? join(homedir(), ".gate-wallet");
+  return process.env["GATE_DEX_HOME"] ?? join(homedir(), ".gate-dex");
 }
 
 function getAuthFile(): string {
-  return process.env["GATE_WALLET_AUTH_FILE"] ?? join(getAuthDir(), "auth.json");
+  return process.env["GATE_DEX_AUTH_FILE"] ?? join(getAuthDir(), "auth.json");
 }
 
 function getDeviceFile(): string {
@@ -105,7 +105,7 @@ export function getAuthFilePath(): string {
 }
 
 /**
- * 获取或生成稳定的设备指纹 token（首次生成后持久化到 ~/.gate-wallet/device.json）
+ * 获取或生成稳定的设备指纹 token（首次生成后持久化到 ~/.gate-dex/device.json）
  * 用于 GV API 的 x-gtweb3-device-token 请求头
  */
 export function getOrCreateDeviceToken(): string {

@@ -1,5 +1,5 @@
 /**
- * Gate Wallet REST API Client
+ * Gate Dex REST API Client
  * 直接调用业务接口，替代 MCP tool 调用
  *
  * wallet service (gateio-service-web3-wallet):
@@ -845,7 +845,7 @@ export class SwapApiClient {
       projectId: req.projectId,
       params: req.params,
       extraData: req.extraData ?? {},
-      userAgent: req.userAgent ?? "gate-wallet-cli",
+      userAgent: req.userAgent ?? "gate-dex-cli",
       source: req.source ?? "cli",
     };
     const resp = await fetch(url, {
