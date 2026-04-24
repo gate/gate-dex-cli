@@ -26,9 +26,9 @@ function bwDeviceToken(): string {
 
 // ─── URL 配置 ──────────────────────────────────────────────
 
-const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-test.gateweb3.cc";
-const DEFAULT_BW_SERVICE_URL = "https://web3-business-wallet-test.gateweb3.cc";
-const DEFAULT_MARKET_TOKEN_URL = "https://apipro-test-new.gateweb3.cc";
+const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-prod.gateweb3.cc";
+const DEFAULT_BW_SERVICE_URL = "https://web3-business-wallet-prod.gateweb3.cc";
+const DEFAULT_MARKET_TOKEN_URL = "https://apipro-new.gateweb3.cc";
 
 export function getWalletServiceUrl(): string {
   return process.env["WALLET_SERVICE_URL"] ?? DEFAULT_WALLET_SERVICE_URL;
@@ -48,7 +48,7 @@ export function getBwServiceUrl(): string {
 export function getBizWalletUrl(): string {
   return (
     process.env["BIZ_WALLET_URL"] ??
-    "https://webapi-test.gateweb3.cc/api/web/v1/web3-business-wallet"
+    "https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet"
   );
 }
 
@@ -175,21 +175,12 @@ async function postJson<T>(
 ): Promise<T> {
   const allHeaders = { "Content-Type": "application/json", ...headers };
   const bodyStr = JSON.stringify(body);
-  if (process.env["DEBUG_API"]) {
-    console.log(`\n[DEBUG] POST ${url}`);
-    console.log(`[DEBUG] Headers:`, JSON.stringify(allHeaders, null, 2));
-    console.log(`[DEBUG] Body:`, bodyStr);
-  }
   const res = await fetch(url, {
     method: "POST",
     headers: allHeaders,
     body: bodyStr,
   });
   const text = await res.text();
-  if (process.env["DEBUG_API"]) {
-    console.log(`[DEBUG] Status: ${res.status}`);
-    console.log(`[DEBUG] Response:`, text);
-  }
   let json: ApiResponse<T>;
   try {
     json = JSON.parse(text) as ApiResponse<T>;
@@ -968,7 +959,7 @@ export function createMarketApiClient(): MarketApiClient {
 }
 
 export function getDataApiUrl(): string {
-  return process.env["DATA_API_URL"] ?? "https://web3-data-api-test.gateweb3.cc";
+  return process.env["DATA_API_URL"] ?? "https://web3-data-api.gateweb3.cc";
 }
 
 export function createDataApiClient(): DataApiClient {
