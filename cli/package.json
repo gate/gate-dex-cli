@@ -1,0 +1,53 @@
+{
+  "name": "gate-dex-cli",
+  "version": "2.0.0",
+  "description": "Gate Dex CLI - Custodial Wallet Management Tool",
+  "type": "module",
+  "main": "dist/cli/index.js",
+  "bin": {
+    "gate-dex": "./bin/gate-dex.js"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "cli": "tsx src/cli/index.ts",
+    "build": "tsc && chmod +x bin/gate-dex.js",
+    "build:binary": "node scripts/build-binary.mjs",
+    "dev": "tsx --watch src/cli/index.ts",
+
+    "prepublishOnly": "cp ../README.md ./README.md && npm run build",
+    "preuninstall": "node ./bin/uninstall.cjs"
+  },
+  "keywords": [
+    "gate",
+    "wallet",
+    "cli",
+    "web3"
+  ],
+  "author": "Gate",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gate/gate-dex-cli.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/gate/gate-dex-cli#readme",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "open": "^11.0.0",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+"tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

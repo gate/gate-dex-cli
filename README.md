@@ -1,93 +1,212 @@
-# gate-dex-cli
+# Gate Dex CLI
 
+A command-line interface for [Gate](https://gate.com) Web3 wallet. Supports balance queries, transfers, Swap, market data, and token analytics via the REST API. Designed for developers, quants, and AI agents.
 
+## Quick Start
 
-## Getting started
+- [English Quick Start](docs/quickstart.md)
+- [中文快速上手](docs/quickstart_zh.md)
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Features
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://git.fulltrust.link/web3/ai/gate-dex-cli.git
-git branch -M main
-git push -uf origin main
-```
-
-## Integrate with your tools
-
-* [Set up project integrations](https://git.fulltrust.link/web3/ai/gate-dex-cli/-/settings/integrations)
-
-## Collaborate with your team
-
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
-
-## Test and Deploy
-
-Use the built-in continuous integration in GitLab.
-
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
-
-***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+- **REST API** — OAuth + custodial signing
+- **Multi-chain** — EVM chains (Ethereum, BSC, Arbitrum, Base, Polygon, etc.), Solana, Tron, Sui, TON
+- **Wallet** — balance, addresses, tokens, one-click transfers (preview→sign→broadcast)
+- **Swap** — full lifecycle: quote → build → sign → submit → status tracking
+- **Market data** — K-line, liquidity, trade volume, token rankings, security audits
+- **Two modes** — single-command or interactive REPL with persistent session
+- **AI Agent ready** — structured output for scripting and agent integration
 
 ## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### npm global install (recommended)
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```bash
+npm install -g gate-dex-cli
+gate-dex login
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+### npx (no install)
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```bash
+npx gate-dex-cli login
+npx gate-dex-cli balance
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+### From source
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+```bash
+git clone <repo-url>
+cd gate-dex-cli/cli
+pnpm install
+pnpm cli login
+```
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Configuration
 
-## License
-For open source projects, say how it is licensed.
+```bash
+# OAuth login (token saved to ~/.gate-dex/auth.json, 30-day expiry)
+gate-dex login              # Gate OAuth
+gate-dex login --google     # Google OAuth
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Or configure manually:
+
+| Path                              | Purpose                      |
+| --------------------------------- | ---------------------------- |
+| `~/.gate-dex/auth.json`        | OAuth token (auto-generated) |
+
+### Custom auth file path
+
+Use `--auth-file` to point the CLI at an `auth.json` written by a third party (no login flow needed):
+
+```bash
+gate-dex --auth-file /path/to/auth.json status
+gate-dex --auth-file /path/to/auth.json balance
+```
+
+Or set the env variable: `GATE_DEX_AUTH_FILE=/path/to/auth.json gate-dex balance`
+
+`--auth-file` takes precedence over `--auth-dir` / `GATE_DEX_HOME`.
+
+## Usage examples
+
+```bash
+# Auth
+gate-dex login
+gate-dex logout
+
+# Wallet queries
+gate-dex balance
+gate-dex address
+gate-dex tokens
+
+# One-click transfer
+gate-dex send --chain ETH --to 0x... --amount 0.0001
+gate-dex send --chain SOL --to <address> --amount 0.001
+gate-dex send --chain ETH --to 0x... --amount 1 --token 0xdAC17F...   # ERC20
+
+# Swap
+gate-dex swap --from-chain 1 --from - --to 0xdAC17F... --amount 0.01 --native-in 1
+gate-dex swap-detail <order_id>
+
+# Market data
+gate-dex kline --chain eth --address 0x...
+gate-dex token-rank --chain eth --limit 10
+gate-dex token-risk --chain eth --address 0x...
+
+# Interactive REPL
+gate-dex
+```
+
+## Command reference
+
+### Auth & Wallet
+
+| Command            | Description                  |
+| ------------------ | ---------------------------- |
+| `login [--google]` | OAuth login (Gate or Google) |
+| `logout`           | Clear token                  |
+| `web3-domain`      | View/refresh web3 domain list |
+| `balance`          | Total asset balance          |
+| `address`          | Wallet addresses (EVM/SOL)   |
+| `tokens`           | Token list with balances     |
+
+### Transfer
+
+| Command                                                   | Description                                 |
+| --------------------------------------------------------- | ------------------------------------------- |
+| `send --chain <c> --to <addr> --amount <n>`               | One-click transfer (preview→sign→broadcast) |
+| `gas [chain]`                                             | Gas fees                                    |
+| `transfer --chain <c> --to <addr> --amount <n>`           | Transfer preview only                       |
+| `sign-msg <message>`                                      | Sign message                                |
+| `sign-tx <raw_tx>`                                        | Sign raw transaction (with GV safety check) |
+| `send-tx --chain <c> --hex <tx> --to <addr> --amount <n>` | Broadcast signed tx                         |
+| `sol-tx --chain SOL --to <addr> --amount <n>`             | Build Solana unsigned transfer tx           |
+| `tx-detail <tx_hash>`                                     | Transaction details                         |
+| `tx-history [--limit N]`                                  | Transaction history                         |
+
+### Swap
+
+| Command                                                          | Description              |
+| ---------------------------------------------------------------- | ------------------------ |
+| `quote --from-chain <id> --from <addr> --to <addr> --amount <n>` | Get swap quote           |
+| `swap --from-chain <id> --from <addr> --to <addr> --amount <n>`  | One-click swap           |
+| `swap-detail <order_id>`                                         | Swap transaction details |
+| `swap-history [--limit N]`                                       | Swap/bridge history      |
+
+### Market & Token
+
+| Command                                          | Description                      |
+| ------------------------------------------------ | -------------------------------- |
+| `kline --chain <c> --address <addr>`             | K-line data                      |
+| `liquidity --chain <c> --address <addr>`         | Liquidity pool events            |
+| `tx-stats --chain <c> --address <addr>`          | Trade volume (5m/1h/4h/24h)      |
+| `token-info --chain <c> --address <addr>`        | Token details (price/market cap) |
+| `token-risk --chain <c> --address <addr>`        | Security audit                   |
+| `token-rank --chain <c> [--limit N]`             | Top gainers/losers (24h)         |
+| `new-tokens --chain <c> --start <ISO>`           | New tokens by creation time      |
+| `swap-tokens --chain <c> [--search <q>]`         | Swappable tokens                 |
+| `bridge-tokens --src-chain <c> --dest-chain <c>` | Cross-chain bridge targets       |
+
+### Chain & Advanced
+
+| Command                        | Description                |
+| ------------------------------ | -------------------------- |
+| `chain-config [chain]`         | Chain configuration        |
+| `rpc --chain <c> --method <m>` | JSON-RPC call              |
+| `cleanup`                      | Remove local config files  |
+
+## Swap parameters
+
+| Flag           | Description                              |
+| -------------- | ---------------------------------------- |
+| `--from-chain` | Source chain ID (ETH=1, BSC=56, SOL=501) |
+| `--to-chain`   | Destination chain ID                     |
+| `--from`       | Source token address (`-` for native)    |
+| `--to`         | Target token address                     |
+| `--amount`     | Amount to swap                           |
+| `--native-in`  | Source is native coin (1/0)              |
+| `--native-out` | Target is native coin (1/0)              |
+| `--slippage`   | Slippage tolerance (0.03 = 3%)           |
+
+## Supported chains
+
+| Chain     | Chain ID | Parameter |
+| --------- | -------- | --------- |
+| Ethereum  | 1        | ETH       |
+| BSC       | 56       | BSC       |
+| Polygon   | 137      | POLYGON   |
+| Arbitrum  | 42161    | ARB       |
+| Base      | 8453     | BASE      |
+| Optimism  | 10       | OP        |
+| Avalanche | 43114    | AVAX      |
+| Solana    | 501      | SOL       |
+| Fantom    | 250      | FTM       |
+| Cronos    | 25       | cronos    |
+| Linea     | 59144    | linea     |
+| Scroll    | 534352   | scroll    |
+| zkSync    | 324      | zksync    |
+| Mantle    | 5000     | mantle    |
+| GateLayer | 10088    | gatelayer |
+| Tron      | 195      | TRX       |
+| Sui       | 101      | sui       |
+| TON       | 607      | ton       |
+
+## Documentation
+
+| Document                                       | Description               |
+| ---------------------------------------------- | ------------------------- |
+| [docs/quickstart.md](docs/quickstart.md)       | English quick start guide |
+| [docs/quickstart_zh.md](docs/quickstart_zh.md) | 中文快速上手              |
+
+## Tech stack
+
+- **Runtime**: Node.js >= 18 + TypeScript
+- **CLI**: Commander.js
+- **Auth**: Google / Gate OAuth 2.0
+- **REST API**: Direct HTTP calls to Gate wallet services
+
+## AI Agent integration
+
+> AI Agent Skills have been migrated to **[web3-wallet-skill](https://github.com/gate/gate-skills/tree/master/skills/gate-dex-wallet)** — visit that repo for installation and usage.
