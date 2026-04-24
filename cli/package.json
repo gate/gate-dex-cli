@@ -14,6 +14,7 @@
   "scripts": {
     "cli": "tsx src/cli/index.ts",
     "build": "tsc && chmod +x bin/gate-wallet.js",
+    "build:binary": "node scripts/build-binary.mjs",
     "dev": "tsx --watch src/cli/index.ts",
 
     "prepublishOnly": "cp ../README.md ./README.md && npm run build",
@@ -46,7 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.5",
-    "tsx": "^4.21.0",
+"tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }
