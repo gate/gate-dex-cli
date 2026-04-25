@@ -120,7 +120,8 @@ function applyExitOverride(cmd: Command) {
 
 const rawArgs = process.argv.slice(2);
 const { operands } = program.parseOptions(rawArgs);
-const hasSubcommand = operands.length > 0;
+const META_FLAGS = new Set(["-h", "--help", "-v", "--version", "-V"]);
+const hasSubcommand = operands.length > 0 || rawArgs.some((a) => META_FLAGS.has(a));
 
 if (hasSubcommand) {
   program
@@ -155,39 +156,44 @@ if (hasSubcommand) {
 
   rl.prompt();
 
-  rl.on("line", async (line) => {
+  let cmdQueue: Promise<void> = Promise.resolve();
+
+  rl.on("line", (line) => {
     const input = line.trim();
 
     if (!input) {
-      rl.prompt();
+      cmdQueue = cmdQueue.then(() => { rl.prompt(); });
       return;
     }
 
     if (input === "exit" || input === "quit") {
-      console.log(chalk.gray("Bye!"));
-      process.exit(0);
+      cmdQueue = cmdQueue.then(() => {
+        console.log(chalk.gray("Bye!"));
+        process.exit(0);
+      });
+      return;
     }
 
     if (input === "help") {
-      program.outputHelp();
-      rl.prompt();
+      cmdQueue = cmdQueue.then(() => {
+        program.outputHelp();
+        rl.prompt();
+      });
       return;
     }
 
     const argv = parseArgs(input);
-
-    try {
-      await program.parseAsync(["node", "gate-dex", ...argv]);
-    } catch {
-      // Commander 错误已由其内部处理
-    }
-
-    console.log();
-    rl.prompt();
+    cmdQueue = cmdQueue
+      .then(() => program.parseAsync(["node", "gate-dex", ...argv]))
+      .catch(() => {})
+      .then(() => {
+        console.log();
+        rl.prompt();
+      });
   });
 
   rl.on("close", () => {
-    process.exit(0);
+    cmdQueue.finally(() => process.exit(0));
   });
 }
 

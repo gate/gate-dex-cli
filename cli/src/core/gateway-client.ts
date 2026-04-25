@@ -96,6 +96,7 @@ interface ApiEnvelope<T = unknown> {
   msg?: string;
   data: T;
   timestamp?: number;
+  extra?: { errDetail?: string; [k: string]: unknown };
 }
 
 export class GatewayApiError extends Error {
@@ -289,11 +290,15 @@ export class GatewayApiClient {
     try {
       parsed = JSON.parse(text) as ApiEnvelope<T>;
     } catch {
-      throw new Error(`Gateway [${path}] non-JSON response: ${text.slice(0, 200)}`);
+      throw new Error(`Gateway [${path}] HTTP ${res.status} non-JSON: ${text.slice(0, 300)}`);
     }
     if (parsed.code !== 0) {
       const msg = parsed.message ?? parsed.msg ?? "unknown";
-      throw new GatewayApiError(path, parsed.code, msg, parsed);
+      const detail = parsed.extra?.errDetail ? `\n  Detail: ${parsed.extra.errDetail}` : "";
+      const hint = parsed.code === undefined
+        ? ` (HTTP ${res.status}, raw: ${text.slice(0, 200)})`
+        : "";
+      throw new GatewayApiError(path, parsed.code, msg + hint + detail, parsed);
     }
     return parsed.data;
   }

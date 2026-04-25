@@ -171,10 +171,11 @@ export function registerShortcutCommands(program: Command) {
     try {
       const auth = loadAuth();
       if (!auth) throw new Error("Not logged in. Run: login");
-      if (!auth.user_id) throw new Error("user_id not found, please re-login");
+      const accountId = auth.account_id ?? auth.user_id;
+      if (!accountId) throw new Error("account_id not found, please re-login");
       const spinner = ora("查询总资产余额...").start();
       const client = createWalletApiClient(auth.mcp_token);
-      const result = await client.getTotalAsset(auth.user_id);
+      const result = await client.getTotalAsset(accountId);
       spinner.succeed("查询成功");
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
@@ -1151,7 +1152,7 @@ export function registerShortcutCommands(program: Command) {
         if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询交易历史...").start();
         const result = await gatewayTransList(createGatewayApiClient(auth.mcp_token), {
-          account_id: auth.user_id,
+          account_id: auth.account_id ?? auth.user_id,
           page_num: opts.page ? Number(opts.page) : 1,
           page_size: opts.limit ? Number(opts.limit) : 20,
           start_time: opts.start,
@@ -1174,7 +1175,7 @@ export function registerShortcutCommands(program: Command) {
         if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询 Swap 历史...").start();
         const result = await createSwapApiClient().swapHistory({
-          accountId: auth.user_id,
+          accountId: auth.account_id ?? auth.user_id,
           pageNum: opts.page ? Number(opts.page) : 1,
           pageSize: opts.limit ? Number(opts.limit) : 20,
         });
@@ -1233,7 +1234,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 K 线数据...").start();
         const client = createMarketTradeClient();
         const result = await client.getKline({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           period: opts.period ?? "1h",
           pairAddress: opts.pair,
@@ -1258,7 +1259,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询流动性池事件...").start();
         const client = createMarketTradeClient();
         const result = await client.getPairLiquidity({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
           pageIndex: opts.page ? Number(opts.page) : undefined,
@@ -1281,7 +1282,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询交易量统计...").start();
         const client = createMarketTradeClient();
         const result = await client.getVolumeStats({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
         });
@@ -1302,7 +1303,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 列表...").start();
         const client = createMarketApiClient();
         const result = await client.listSwapBridgeTokens({
-          chain: opts.chain,
+          chain: opts.chain?.toLowerCase(),
           search: opts.search,
           tag: opts.tag,
         });
@@ -1324,8 +1325,8 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询跨链桥 Token...").start();
         const client = createMarketApiClient();
         const result = await client.listSwapBridgeTokens({
-          sourceChain: opts.srcChain,
-          chain: opts.destChain,
+          sourceChain: opts.srcChain?.toLowerCase(),
+          chain: opts.destChain?.toLowerCase(),
           sourceAddress: opts.token,
           search: opts.search,
         });
@@ -1347,7 +1348,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 详情...").start();
         const client = createDataApiClient();
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           address: opts.address ? { eq: opts.address } : undefined,
           limit: 1,
         });
@@ -1366,7 +1367,7 @@ export function registerShortcutCommands(program: Command) {
       try {
         const spinner = ora("查询安全审计信息...").start();
         const client = createDataApiClient();
-        const result = await client.getSecurityRiskInfos(opts.chain ?? "", opts.address ?? "");
+        const result = await client.getSecurityRiskInfos((opts.chain ?? "").toLowerCase(), opts.address ?? "");
         spinner.succeed("查询成功");
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
@@ -1386,7 +1387,7 @@ export function registerShortcutCommands(program: Command) {
         const limit = opts.limit ? Number(opts.limit) : 10;
         const direction = (opts.direction ?? "desc") as "asc" | "desc";
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           sort: [{ field: "trend_info.price_change_24h", order: direction }],
           limit,
         });
@@ -1409,7 +1410,7 @@ export function registerShortcutCommands(program: Command) {
         const client = createDataApiClient();
         const end = opts.end ?? new Date().toISOString();
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           created_at: opts.start ? { range: { start: opts.start, end } } : undefined,
           sort: [{ field: "created_at", order: "desc" }],
           limit: opts.limit ? Number(opts.limit) : 20,
