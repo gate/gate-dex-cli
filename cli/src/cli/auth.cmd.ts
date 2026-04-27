@@ -1672,6 +1672,42 @@ async function loginGateViaRest(noOpen = false) {
   const baseUrl = getBizWalletUrl();
   const loginSpinner = ora("Starting Gate OAuth login...").start();
 
+  let cancelled = false;
+  const abortCtrl = new AbortController();
+  let currentSpinner: { stop: () => unknown } = loginSpinner;
+  const cleanupAndExit = () => {
+    cancelled = true;
+    abortCtrl.abort();
+    currentSpinner.stop();
+    cleanupCtrlCWatcher();
+    console.log(chalk.yellow("\nLogin cancelled."));
+    process.exit(130);
+  };
+  process.once("SIGINT", cleanupAndExit);
+
+  // 兜底：直接从 stdin 读 Ctrl+C 字节（0x03），绕过 SIGINT 链路
+  // （某些 spinner 库 / tsx / pnpm 层会吞掉 SIGINT 信号）
+  let cleanupCtrlCWatcher: () => void = () => {};
+  if (process.stdin.isTTY) {
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    try {
+      stdin.setRawMode(true);
+      stdin.resume();
+      const onData = (buf: Buffer) => {
+        if (buf[0] === 0x03) cleanupAndExit();
+      };
+      stdin.on("data", onData);
+      cleanupCtrlCWatcher = () => {
+        stdin.off("data", onData);
+        try { stdin.setRawMode(wasRaw); } catch {}
+        stdin.pause();
+      };
+    } catch {
+      // 无法切到 raw mode 就放弃，依赖 SIGINT
+    }
+  }
+
   let flowData: DeviceStartResponse;
   try {
     const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/start`, {
@@ -1684,6 +1720,7 @@ async function loginGateViaRest(noOpen = false) {
         "source": "3",
       },
       body: JSON.stringify({}),
+      signal: abortCtrl.signal,
     });
 
     if (!res.ok) {
@@ -1693,16 +1730,22 @@ async function loginGateViaRest(noOpen = false) {
 
     flowData = (await res.json()) as DeviceStartResponse;
   } catch (err) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(`Failed to start Gate login: ${(err as Error).message}`);
     return;
   }
 
   if (flowData.error) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(`Gate login error: ${flowData.error}`);
     return;
   }
 
   if (!flowData.verification_url || !flowData.flow_id) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(
       "Failed to start Gate login: no verification_url returned",
     );
@@ -1726,13 +1769,9 @@ async function loginGateViaRest(noOpen = false) {
   }
 
   const pollSpinner = ora("Waiting for Gate authorization...").start();
+  currentSpinner = pollSpinner;
   const intervalMs = (flowData.interval ?? 5) * 1000;
   const deadline = Date.now() + (flowData.expires_in ?? 1800) * 1000;
-
-  let cancelled = false;
-  const abortCtrl = new AbortController();
-  const onSigint = () => { cancelled = true; abortCtrl.abort(); pollSpinner.stop(); process.exit(0); };
-  process.once("SIGINT", onSigint);
 
   while (Date.now() < deadline && !cancelled) {
     await sleep(intervalMs, abortCtrl.signal);
@@ -1757,7 +1796,8 @@ async function loginGateViaRest(noOpen = false) {
 
       if (poll.status === "ok") {
         if (poll.mcp_token) {
-          process.removeListener("SIGINT", onSigint);
+          process.removeListener("SIGINT", cleanupAndExit);
+          cleanupCtrlCWatcher();
           pollSpinner.succeed("Gate login successful!");
 
           saveAuth({
@@ -1786,7 +1826,8 @@ async function loginGateViaRest(noOpen = false) {
       }
 
       if (poll.status === "error") {
-        process.removeListener("SIGINT", onSigint);
+        process.removeListener("SIGINT", cleanupAndExit);
+        cleanupCtrlCWatcher();
         pollSpinner.fail(`Gate login failed: ${poll.error ?? "Unknown error"}`);
         return;
       }
@@ -1795,7 +1836,8 @@ async function loginGateViaRest(noOpen = false) {
     }
   }
 
-  process.removeListener("SIGINT", onSigint);
+  process.removeListener("SIGINT", cleanupAndExit);
+  cleanupCtrlCWatcher();
   pollSpinner.fail(cancelled ? "Login cancelled" : "Login timed out");
 }
 

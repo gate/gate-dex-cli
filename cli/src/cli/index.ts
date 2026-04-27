@@ -1,3 +1,11 @@
+// 兜底 SIGINT：必须在所有可能注册 signal handler 的库（ora/cli-cursor/signal-exit）加载之前注册，
+// 否则它们的 handler 链会让 Ctrl+C 在 spinner 转动时无效。
+process.on("SIGINT", () => {
+  process.stdout.write("\n");
+  process.exit(130);
+});
+process.on("SIGTERM", () => process.exit(143));
+
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
