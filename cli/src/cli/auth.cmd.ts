@@ -1759,12 +1759,16 @@ async function loginGateViaRest(noOpen = false) {
   }
 
   if (noOpen) {
-    console.log(chalk.bold("  Authorization URL:"));
-    console.log(chalk.cyan(flowData.verification_url));
+    // 直接写 stderr：避开 stdout 在容器/非 TTY 下的 block-buffering，
+    // 也避免下一行 ora spinner 的 \r 控制把这两行覆盖掉
+    process.stderr.write(`  Authorization URL:\n  ${flowData.verification_url}\n`);
   } else {
     const opened = await openBrowser(flowData.verification_url);
     if (opened) {
       console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+    } else {
+      // openBrowser 失败时也兜底打印 URL
+      process.stderr.write(`  Authorization URL:\n  ${flowData.verification_url}\n`);
     }
   }
 
