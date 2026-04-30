@@ -19,7 +19,9 @@ function bwDeviceToken(): string {
 // ─── URL 配置 ──────────────────────────────────────────────
 
 const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-prod.gateweb3.cc";
-const DEFAULT_BW_SERVICE_URL = "https://web3-business-wallet-prod.gateweb3.cc";
+// 注意：服务注册中心未对外暴露 BW prod 公网域名，仅有内网入口。
+// 公网部署务必通过 BW_SERVICE_URL 环境变量显式注入实际可达地址。
+const DEFAULT_BW_SERVICE_URL = "http://web3-ingress-prod.gateweb3.io/web3-business-wallet";
 const DEFAULT_MARKET_TOKEN_URL = "https://apipro-new.gateweb3.cc";
 
 export function getWalletServiceUrl(): string {
@@ -949,7 +951,7 @@ export function createMarketApiClient(): MarketApiClient {
 }
 
 export function getDataApiUrl(): string {
-  return process.env["DATA_API_URL"] ?? "https://web3-data-api.gateweb3.cc";
+  return process.env["DATA_API_URL"] ?? "https://web3-data-api-prod.gateweb3.cc";
 }
 
 export function createDataApiClient(): DataApiClient {
