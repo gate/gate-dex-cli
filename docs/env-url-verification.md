@@ -90,11 +90,13 @@
 
 > 用途：市场行情、Token 列表、Swap quote/build/submit
 
+> 服务名：`gateio-service-web3-token-chain`
+
 | 环境 | URL | 状态 | 备注 |
 |---|---|---|---|
-| test | `https://apipro-test-new.gateweb3.cc` | ☐ | |
-| pre  | `https://apipro-pre-new.gateweb3.cc`  | ☐ | 审计文档原标 (待确认) |
-| prod | `https://apipro-new.gateweb3.cc`      | ☐ | 审计文档原标 (待确认) |
+| test | `https://apipro-test-new.gateweb3.cc` | ✅ | 注册中心确认 |
+| pre  | `https://apipro-pre.gateweb3.cc`      | ✅ | 注册中心确认（无 `-new` 后缀） |
+| prod | `https://apipro-prod.gateweb3.cc`     | ✅ | 注册中心确认；已修源码默认值；另有 12 个抗封禁备用域名（freshmarkethome / ldd678 / w3-api / jxzhlp 等）|
 
 ---
 
@@ -117,8 +119,8 @@
 
 | 环境 | URL | 状态 | 备注 |
 |---|---|---|---|
-| test     | `https://webapi-test.gateweb3.cc/api/web/v1/web3-business-wallet` | ☐ | |
-| pre/prod | `https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet`      | ☐ | pre/prod 共用 |
+| test     | `https://webapi-test.gateweb3.cc/api/web/v1/web3-business-wallet` | ✅ | 用户已确认 |
+| pre/prod | `https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet`      | ✅ | 用户已确认；pre/prod 共用 |
 
 ---
 
