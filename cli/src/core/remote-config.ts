@@ -3,9 +3,10 @@
  *
  * 流程（简化自 web3-wallet-plugin-web 的 gt-remote-config.ts，只保留 web3_domain，
  * 不含云备份 / 静态 CDN / 轮询）：
- *   1. 根据 RUN_ENV (dev/pre/prod) 选候选 CDN URL 列表
+ *   1. 选候选 CDN URL 列表（支持 CDN_DOMAINS 环境变量覆盖，逗号分隔）
  *   2. 并行 Ping 候选（GET {host}/v1/cdn/get-dynamic），找出第一个可用的
  *   3. 拉取 { code, data: { web3_domain: [{ host }] } }
+ *      （或通过 WEB3_DOMAIN_HOSTS 环境变量直接指定 host 列表）
  *   4. 对 web3_domain 做并行 speed test（GET {host}/speed_test），按响应时间排序
  *   5. 结果缓存到 ~/.gate-dex/web3-domain.json，TTL = 5 分钟
  *
@@ -13,8 +14,6 @@
  *   const primary = await getPrimaryWeb3Domain();   // 最快的可用域名
  *   const list = await getAvailableWeb3Domains();   // 全部可用域名（已排序）
  *   await refreshWeb3Domains();                      // 强制刷新
- *
- * 拿到的域名形如 "http://test-api.ldd710.com"，拼路径即为最终 URL。
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -27,21 +26,17 @@ function getCacheFile(): string {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TIMEOUT_MS = 5000;
 
-// ── 环境检测 ─────────────────────────────────────────────────
+// ── CDN 候选域名 ─────────────────────────────────────────────
 
-type RunEnv = "dev" | "pre" | "prod";
-
-function getRunEnv(): RunEnv {
-  const e = (process.env["RUN_ENV"] ?? "").toLowerCase();
-  if (e === "dev" || e === "development") return "dev";
-  if (e === "pre" || e === "pre-production") return "pre";
-  return "prod";
-}
-
-/** CDN 候选域名（get-dynamic 接口），按优先级排序 */
-function getCdnCandidateDomains(env: RunEnv): string[] {
-  if (env === "dev") return ["web3-wallet-cdn-test.gateweb3.cc"];
-  if (env === "pre") return ["web3-wallet-cdn-pre.gateweb3.cc"];
+/** CDN 候选域名（get-dynamic 接口），按优先级排序；可用 CDN_DOMAINS 覆盖 */
+function getCdnCandidateDomains(): string[] {
+  const override = process.env["CDN_DOMAINS"];
+  if (override) {
+    return override
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
   return [
     "api.freshmarkethome.com/api/plug/v1/web3-wallet-cdn",
     "api.freshmarketpage.com/api/plug/v1/web3-wallet-cdn",
@@ -113,8 +108,8 @@ async function measureRequestMs(url: string, timeoutMs: number): Promise<number>
 
 // ── 1. 找可用的 CDN URL ──────────────────────────────────────
 
-async function findAvailableCdnUrl(env: RunEnv): Promise<string | null> {
-  const candidates = getCdnCandidateDomains(env);
+async function findAvailableCdnUrl(): Promise<string | null> {
+  const candidates = getCdnCandidateDomains();
   // 并发 ping 所有候选，取第一个 <400 的
   const probes = candidates.map(async (domain) => {
     const httpsUrl = `https://${domain}/v1/cdn/get-dynamic`;
@@ -137,16 +132,17 @@ async function findAvailableCdnUrl(env: RunEnv): Promise<string | null> {
 
 // ── 2. 拉取 web3_domain 列表 ─────────────────────────────────
 
-async function fetchWeb3DomainList(env: RunEnv): Promise<Array<{ host: string }>> {
-  // pre 环境硬编码（和 plugin-web 对齐）
-  if (env === "pre") {
-    return [
-      { host: "http://pre-api.ldd710.com" },
-      { host: "http://pre-api.ldd711.com" },
-      { host: "http://pre-api.ldd712.com" },
-    ];
+async function fetchWeb3DomainList(): Promise<Array<{ host: string }>> {
+  // 通过 WEB3_DOMAIN_HOSTS 环境变量直接指定 host 列表（逗号分隔）
+  const override = process.env["WEB3_DOMAIN_HOSTS"];
+  if (override) {
+    const hosts = override
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (hosts.length > 0) return hosts.map((host) => ({ host }));
   }
-  const url = await findAvailableCdnUrl(env);
+  const url = await findAvailableCdnUrl();
   if (!url) throw new Error("no reachable CDN config URL");
   const body = await fetchJson<ApiEnvelope<RemoteConfigResp>>(url, 10000);
   if (body.code !== 0) {
@@ -222,8 +218,7 @@ export async function getWeb3Domains(): Promise<Web3DomainItem[]> {
 
   inflight = (async () => {
     try {
-      const env = getRunEnv();
-      const raw = await fetchWeb3DomainList(env);
+      const raw = await fetchWeb3DomainList();
       const tested = await speedTestDomains(raw);
       saveCache(tested);
       return tested;
@@ -236,8 +231,7 @@ export async function getWeb3Domains(): Promise<Web3DomainItem[]> {
 
 /** 强制刷新（忽略缓存）。 */
 export async function refreshWeb3Domains(): Promise<Web3DomainItem[]> {
-  const env = getRunEnv();
-  const raw = await fetchWeb3DomainList(env);
+  const raw = await fetchWeb3DomainList();
   const tested = await speedTestDomains(raw);
   saveCache(tested);
   return tested;

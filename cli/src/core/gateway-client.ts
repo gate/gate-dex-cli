@@ -4,7 +4,6 @@
  *
  * URL 组装：
  *   {primary_web3_domain}{GATEWAY_PREFIX}{route}
- *   例：http://test-api.ldd710.com/api/plug/v1/web3-wallet/web3wallet/wallet/token-list
  *
  * 签名时 path 会剥掉 GATEWAY_PREFIX，与 plugin-web 的 `API_PATH_PREFIX_LIST` 行为一致。
  *
@@ -96,6 +95,7 @@ interface ApiEnvelope<T = unknown> {
   msg?: string;
   data: T;
   timestamp?: number;
+  extra?: { errDetail?: string; [k: string]: unknown };
 }
 
 export class GatewayApiError extends Error {
@@ -289,11 +289,15 @@ export class GatewayApiClient {
     try {
       parsed = JSON.parse(text) as ApiEnvelope<T>;
     } catch {
-      throw new Error(`Gateway [${path}] non-JSON response: ${text.slice(0, 200)}`);
+      throw new Error(`Gateway [${path}] HTTP ${res.status} non-JSON: ${text.slice(0, 300)}`);
     }
     if (parsed.code !== 0) {
       const msg = parsed.message ?? parsed.msg ?? "unknown";
-      throw new GatewayApiError(path, parsed.code, msg, parsed);
+      const detail = parsed.extra?.errDetail ? `\n  Detail: ${parsed.extra.errDetail}` : "";
+      const hint = parsed.code === undefined
+        ? ` (HTTP ${res.status}, raw: ${text.slice(0, 200)})`
+        : "";
+      throw new GatewayApiError(path, parsed.code, msg + hint + detail, parsed);
     }
     return parsed.data;
   }

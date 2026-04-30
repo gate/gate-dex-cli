@@ -2,20 +2,28 @@
  * Gate Dex REST API Client
  * 直接调用业务接口，替代 MCP tool 调用
  *
- * wallet service (gateio-service-web3-wallet):
- *   test: https://web3-wallet-service-test.gateweb3.cc
- *   pre:  https://web3-wallet-service-pre.gateweb3.cc
- *   prod: https://web3-wallet-service-prod.gateweb3.cc
+ * 各业务 base URL 默认走 prod，可通过环境变量覆盖：
+ *   - WALLET_SERVICE_URL  → wallet service (gateio-service-web3-wallet)
+ *   - BW_SERVICE_URL      → bw service (web3-business-wallet)，登录后业务调用
+ *   - BIZ_WALLET_URL      → web3-business-wallet 走 webapi 网关的入口，登录前置流程专用
+ *   - MARKET_TOKEN_URL    → market token service (gateio_service_web3_trade_token)
+ *   - DATA_API_URL        → data api
  *
- * bw service (web3-business-wallet):
- *   test: https://web3-business-wallet-test.gateweb3.cc  (待确认)
- *   pre:  https://web3-business-wallet-pre.gateweb3.cc   (待确认)
- *   prod: https://web3-business-wallet-prod.gateweb3.cc  (待确认)
- *
- * market token service (gateio_service_web3_trade_token):
- *   test: https://apipro-test-new.gateweb3.cc
- *   pre:  https://apipro-pre-new.gateweb3.cc   (待确认)
- *   prod: https://apipro-new.gateweb3.cc        (待确认)
+ * ⚠️ BIZ_WALLET_URL vs BW_SERVICE_URL 区别（不能合并！）：
+ *   ┌──────────────┬─────────────────────────────────────────┬──────────────────────────────┐
+ *   │ 维度         │ BIZ_WALLET_URL                          │ BW_SERVICE_URL               │
+ *   ├──────────────┼─────────────────────────────────────────┼──────────────────────────────┤
+ *   │ 性质         │ webapi 网关入口                         │ 直连业务服务                 │
+ *   │ 域名         │ webapi.gateweb3.cc/.../web3-business-wallet │ web3-business-wallet-{env}.* │
+ *   │ 路径前缀     │ /api/web/v1/web3-business-wallet/...    │ 无前缀，直接打业务路径       │
+ *   │ 用途         │ OAuth Device Flow 登录 + merchant 凭证  │ 登录后所有业务调用           │
+ *   │ 公网暴露     │ ✅ 走公网网关（CDN/WAF/限流在此）       │ ❌ prod 多数仅内网            │
+ *   └──────────────┴─────────────────────────────────────────┴──────────────────────────────┘
+ *   不能合并的核心约束：
+ *   1. OAuth callback 与 cookie 域名绑定网关（webapi.gateweb3.cc），不能用直连 BW 域名
+ *   2. prod 上两者通常不在同一集群（网关后挂一组微服务，BW 只是其一）
+ *   3. 路径前缀不同，合并会要求代码按场景动态拼前缀，反而更复杂
+ *   4. 登录类接口需 WAF/风控，业务类接口要低延迟，运维分两条路
  */
 
 import { getOrCreateDeviceToken } from "./token-store.js";
@@ -27,8 +35,10 @@ function bwDeviceToken(): string {
 // ─── URL 配置 ──────────────────────────────────────────────
 
 const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-prod.gateweb3.cc";
-const DEFAULT_BW_SERVICE_URL = "https://web3-business-wallet-prod.gateweb3.cc";
-const DEFAULT_MARKET_TOKEN_URL = "https://apipro-new.gateweb3.cc";
+// 注意：服务注册中心未对外暴露 BW prod 公网域名，仅有内网入口。
+// 公网部署务必通过 BW_SERVICE_URL 环境变量显式注入实际可达地址。
+const DEFAULT_BW_SERVICE_URL = "http://web3-ingress-prod.gateweb3.io/web3-business-wallet";
+const DEFAULT_MARKET_TOKEN_URL = "https://apipro-prod.gateweb3.cc";
 
 export function getWalletServiceUrl(): string {
   return process.env["WALLET_SERVICE_URL"] ?? DEFAULT_WALLET_SERVICE_URL;
@@ -40,8 +50,6 @@ export function getBwServiceUrl(): string {
 
 /**
  * web3-business-wallet 网关 base URL（登录接口用）。
- *   test: https://webapi-test.gateweb3.cc/api/web/v1/web3-business-wallet
- *   pre/prod: https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet
  *
  * 登录的完整路径：`{BIZ_WALLET_URL}/v1/wallet/oauth/{gate|google}/device/{start|poll}`
  */
@@ -778,7 +786,7 @@ export interface BuildV3Resp {
 
 // ─── SwapApiClient ───────────────────────────────────────
 // Swap 交易相关：quote / build / submit / detail / history
-// base URL: apipro-test-new.gateweb3.cc (MARKET_TOKEN_URL)
+// base URL: MARKET_TOKEN_URL（getMarketTokenUrl()）
 // 公网路径: /web3api/v3/transaction/... (不带 internal)
 
 export class SwapApiClient {
@@ -959,7 +967,7 @@ export function createMarketApiClient(): MarketApiClient {
 }
 
 export function getDataApiUrl(): string {
-  return process.env["DATA_API_URL"] ?? "https://web3-data-api.gateweb3.cc";
+  return process.env["DATA_API_URL"] ?? "https://web3-data-api-prod.gateweb3.cc";
 }
 
 export function createDataApiClient(): DataApiClient {

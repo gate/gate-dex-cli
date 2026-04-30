@@ -171,10 +171,11 @@ export function registerShortcutCommands(program: Command) {
     try {
       const auth = loadAuth();
       if (!auth) throw new Error("Not logged in. Run: login");
-      if (!auth.user_id) throw new Error("user_id not found, please re-login");
+      const accountId = auth.account_id ?? auth.user_id;
+      if (!accountId) throw new Error("account_id not found, please re-login");
       const spinner = ora("查询总资产余额...").start();
       const client = createWalletApiClient(auth.mcp_token);
-      const result = await client.getTotalAsset(auth.user_id);
+      const result = await client.getTotalAsset(accountId);
       spinner.succeed("查询成功");
       console.log(JSON.stringify(result, null, 2));
     } catch (err) {
@@ -1151,7 +1152,7 @@ export function registerShortcutCommands(program: Command) {
         if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询交易历史...").start();
         const result = await gatewayTransList(createGatewayApiClient(auth.mcp_token), {
-          account_id: auth.user_id,
+          account_id: auth.account_id ?? auth.user_id,
           page_num: opts.page ? Number(opts.page) : 1,
           page_size: opts.limit ? Number(opts.limit) : 20,
           start_time: opts.start,
@@ -1174,7 +1175,7 @@ export function registerShortcutCommands(program: Command) {
         if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询 Swap 历史...").start();
         const result = await createSwapApiClient().swapHistory({
-          accountId: auth.user_id,
+          accountId: auth.account_id ?? auth.user_id,
           pageNum: opts.page ? Number(opts.page) : 1,
           pageSize: opts.limit ? Number(opts.limit) : 20,
         });
@@ -1233,7 +1234,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 K 线数据...").start();
         const client = createMarketTradeClient();
         const result = await client.getKline({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           period: opts.period ?? "1h",
           pairAddress: opts.pair,
@@ -1258,7 +1259,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询流动性池事件...").start();
         const client = createMarketTradeClient();
         const result = await client.getPairLiquidity({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
           pageIndex: opts.page ? Number(opts.page) : undefined,
@@ -1281,7 +1282,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询交易量统计...").start();
         const client = createMarketTradeClient();
         const result = await client.getVolumeStats({
-          chain: opts.chain ?? "",
+          chain: (opts.chain ?? "").toLowerCase(),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
         });
@@ -1302,7 +1303,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 列表...").start();
         const client = createMarketApiClient();
         const result = await client.listSwapBridgeTokens({
-          chain: opts.chain,
+          chain: opts.chain?.toLowerCase(),
           search: opts.search,
           tag: opts.tag,
         });
@@ -1324,8 +1325,8 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询跨链桥 Token...").start();
         const client = createMarketApiClient();
         const result = await client.listSwapBridgeTokens({
-          sourceChain: opts.srcChain,
-          chain: opts.destChain,
+          sourceChain: opts.srcChain?.toLowerCase(),
+          chain: opts.destChain?.toLowerCase(),
           sourceAddress: opts.token,
           search: opts.search,
         });
@@ -1347,7 +1348,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 详情...").start();
         const client = createDataApiClient();
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           address: opts.address ? { eq: opts.address } : undefined,
           limit: 1,
         });
@@ -1366,7 +1367,7 @@ export function registerShortcutCommands(program: Command) {
       try {
         const spinner = ora("查询安全审计信息...").start();
         const client = createDataApiClient();
-        const result = await client.getSecurityRiskInfos(opts.chain ?? "", opts.address ?? "");
+        const result = await client.getSecurityRiskInfos((opts.chain ?? "").toLowerCase(), opts.address ?? "");
         spinner.succeed("查询成功");
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
@@ -1386,7 +1387,7 @@ export function registerShortcutCommands(program: Command) {
         const limit = opts.limit ? Number(opts.limit) : 10;
         const direction = (opts.direction ?? "desc") as "asc" | "desc";
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           sort: [{ field: "trend_info.price_change_24h", order: direction }],
           limit,
         });
@@ -1409,7 +1410,7 @@ export function registerShortcutCommands(program: Command) {
         const client = createDataApiClient();
         const end = opts.end ?? new Date().toISOString();
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain] } : undefined,
+          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           created_at: opts.start ? { range: { start: opts.start, end } } : undefined,
           sort: [{ field: "created_at", order: "desc" }],
           limit: opts.limit ? Number(opts.limit) : 20,
@@ -1671,6 +1672,42 @@ async function loginGateViaRest(noOpen = false) {
   const baseUrl = getBizWalletUrl();
   const loginSpinner = ora("Starting Gate OAuth login...").start();
 
+  let cancelled = false;
+  const abortCtrl = new AbortController();
+  let currentSpinner: { stop: () => unknown } = loginSpinner;
+  const cleanupAndExit = () => {
+    cancelled = true;
+    abortCtrl.abort();
+    currentSpinner.stop();
+    cleanupCtrlCWatcher();
+    console.log(chalk.yellow("\nLogin cancelled."));
+    process.exit(130);
+  };
+  process.once("SIGINT", cleanupAndExit);
+
+  // 兜底：直接从 stdin 读 Ctrl+C 字节（0x03），绕过 SIGINT 链路
+  // （某些 spinner 库 / tsx / pnpm 层会吞掉 SIGINT 信号）
+  let cleanupCtrlCWatcher: () => void = () => {};
+  if (process.stdin.isTTY) {
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    try {
+      stdin.setRawMode(true);
+      stdin.resume();
+      const onData = (buf: Buffer) => {
+        if (buf[0] === 0x03) cleanupAndExit();
+      };
+      stdin.on("data", onData);
+      cleanupCtrlCWatcher = () => {
+        stdin.off("data", onData);
+        try { stdin.setRawMode(wasRaw); } catch {}
+        stdin.pause();
+      };
+    } catch {
+      // 无法切到 raw mode 就放弃，依赖 SIGINT
+    }
+  }
+
   let flowData: DeviceStartResponse;
   try {
     const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/start`, {
@@ -1683,6 +1720,7 @@ async function loginGateViaRest(noOpen = false) {
         "source": "3",
       },
       body: JSON.stringify({}),
+      signal: abortCtrl.signal,
     });
 
     if (!res.ok) {
@@ -1692,16 +1730,22 @@ async function loginGateViaRest(noOpen = false) {
 
     flowData = (await res.json()) as DeviceStartResponse;
   } catch (err) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(`Failed to start Gate login: ${(err as Error).message}`);
     return;
   }
 
   if (flowData.error) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(`Gate login error: ${flowData.error}`);
     return;
   }
 
   if (!flowData.verification_url || !flowData.flow_id) {
+    cleanupCtrlCWatcher();
+    process.removeListener("SIGINT", cleanupAndExit);
     loginSpinner.fail(
       "Failed to start Gate login: no verification_url returned",
     );
@@ -1715,23 +1759,23 @@ async function loginGateViaRest(noOpen = false) {
   }
 
   if (noOpen) {
-    console.log(chalk.bold("  Authorization URL:"));
-    console.log(chalk.cyan(flowData.verification_url));
+    // 直接写 stderr：避开 stdout 在容器/非 TTY 下的 block-buffering，
+    // 也避免下一行 ora spinner 的 \r 控制把这两行覆盖掉
+    process.stderr.write(`  Authorization URL:\n  ${flowData.verification_url}\n`);
   } else {
     const opened = await openBrowser(flowData.verification_url);
     if (opened) {
       console.log(chalk.green("  ✔ Browser opened — please authorize there."));
+    } else {
+      // openBrowser 失败时也兜底打印 URL
+      process.stderr.write(`  Authorization URL:\n  ${flowData.verification_url}\n`);
     }
   }
 
   const pollSpinner = ora("Waiting for Gate authorization...").start();
+  currentSpinner = pollSpinner;
   const intervalMs = (flowData.interval ?? 5) * 1000;
   const deadline = Date.now() + (flowData.expires_in ?? 1800) * 1000;
-
-  let cancelled = false;
-  const abortCtrl = new AbortController();
-  const onSigint = () => { cancelled = true; abortCtrl.abort(); pollSpinner.stop(); process.exit(0); };
-  process.once("SIGINT", onSigint);
 
   while (Date.now() < deadline && !cancelled) {
     await sleep(intervalMs, abortCtrl.signal);
@@ -1756,7 +1800,8 @@ async function loginGateViaRest(noOpen = false) {
 
       if (poll.status === "ok") {
         if (poll.mcp_token) {
-          process.removeListener("SIGINT", onSigint);
+          process.removeListener("SIGINT", cleanupAndExit);
+          cleanupCtrlCWatcher();
           pollSpinner.succeed("Gate login successful!");
 
           saveAuth({
@@ -1785,7 +1830,8 @@ async function loginGateViaRest(noOpen = false) {
       }
 
       if (poll.status === "error") {
-        process.removeListener("SIGINT", onSigint);
+        process.removeListener("SIGINT", cleanupAndExit);
+        cleanupCtrlCWatcher();
         pollSpinner.fail(`Gate login failed: ${poll.error ?? "Unknown error"}`);
         return;
       }
@@ -1794,7 +1840,8 @@ async function loginGateViaRest(noOpen = false) {
     }
   }
 
-  process.removeListener("SIGINT", onSigint);
+  process.removeListener("SIGINT", cleanupAndExit);
+  cleanupCtrlCWatcher();
   pollSpinner.fail(cancelled ? "Login cancelled" : "Login timed out");
 }
 

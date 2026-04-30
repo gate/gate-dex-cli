@@ -18,4 +18,4 @@ if (envB64) {
 };
 
 // 3. Dynamic import so top-level code above runs BEFORE index.ts initializes
-await import("./index.ts");
+await import("./index.js");
