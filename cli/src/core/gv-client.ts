@@ -1,27 +1,17 @@
 /**
  * GV (Gate Verify) Client
  * 交易签名前的安全校验：checkin → 获取 checkin_token → 传给 MCP 签名工具
- *
- * 插件端 API 路由前缀：
- *   test: https://test-api.web3gate.io/api/plug/v1/web3-gv-api
- *   pre:  https://pre-api.web3gate.io/api/plug/v1/web3-gv-api
- *   prod: https://api.web3gate.io/api/plug/v1/web3-gv-api
  */
 
 import { createHash } from "node:crypto";
 
 // ─── URL 映射 ──────────────────────────────────────────────
 
-const GV_URL_TEST = "https://test-api.web3gate.io/api/plug/v1/web3-gv-api";
-const GV_URL_PRE = "https://pre-api.web3gate.io/api/plug/v1/web3-gv-api";
 const GV_URL_PROD = "https://api.web3gate.io/api/plug/v1/web3-gv-api";
 
-/** 根据 RUN_ENV 返回对应的 GV API base URL */
+/** GV API base URL，可用 GV_URL 环境变量覆盖；默认 prod */
 export function getGvBaseUrl(): string {
-  const env = (process.env["RUN_ENV"] ?? "").toLowerCase();
-  if (env === "pre" || env === "pre-production") return GV_URL_PRE;
-  if (env === "dev" || env === "development") return GV_URL_TEST;
-  return GV_URL_PROD;
+  return process.env["GV_URL"] ?? GV_URL_PROD;
 }
 
 // ─── 类型定义 ──────────────────────────────────────────────

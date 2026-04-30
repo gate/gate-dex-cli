@@ -4,7 +4,6 @@
  *
  * URL 组装：
  *   {primary_web3_domain}{GATEWAY_PREFIX}{route}
- *   例：http://test-api.ldd710.com/api/plug/v1/web3-wallet/web3wallet/wallet/token-list
  *
  * 签名时 path 会剥掉 GATEWAY_PREFIX，与 plugin-web 的 `API_PATH_PREFIX_LIST` 行为一致。
  *

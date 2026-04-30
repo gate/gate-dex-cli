@@ -2,20 +2,12 @@
  * Gate Dex REST API Client
  * 直接调用业务接口，替代 MCP tool 调用
  *
- * wallet service (gateio-service-web3-wallet):
- *   test: https://web3-wallet-service-test.gateweb3.cc
- *   pre:  https://web3-wallet-service-pre.gateweb3.cc
- *   prod: https://web3-wallet-service-prod.gateweb3.cc
- *
- * bw service (web3-business-wallet):
- *   test: https://web3-business-wallet-test.gateweb3.cc  (待确认)
- *   pre:  https://web3-business-wallet-pre.gateweb3.cc   (待确认)
- *   prod: https://web3-business-wallet-prod.gateweb3.cc  (待确认)
- *
- * market token service (gateio_service_web3_trade_token):
- *   test: https://apipro-test-new.gateweb3.cc
- *   pre:  https://apipro-pre-new.gateweb3.cc   (待确认)
- *   prod: https://apipro-new.gateweb3.cc        (待确认)
+ * 各业务 base URL 默认走 prod，可通过环境变量覆盖：
+ *   - WALLET_SERVICE_URL  → wallet service (gateio-service-web3-wallet)
+ *   - BW_SERVICE_URL      → bw service (web3-business-wallet)
+ *   - MARKET_TOKEN_URL    → market token service (gateio_service_web3_trade_token)
+ *   - BIZ_WALLET_URL      → web3-business-wallet 网关（登录接口用）
+ *   - DATA_API_URL        → data api
  */
 
 import { getOrCreateDeviceToken } from "./token-store.js";
@@ -40,8 +32,6 @@ export function getBwServiceUrl(): string {
 
 /**
  * web3-business-wallet 网关 base URL（登录接口用）。
- *   test: https://webapi-test.gateweb3.cc/api/web/v1/web3-business-wallet
- *   pre/prod: https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet
  *
  * 登录的完整路径：`{BIZ_WALLET_URL}/v1/wallet/oauth/{gate|google}/device/{start|poll}`
  */
@@ -778,7 +768,7 @@ export interface BuildV3Resp {
 
 // ─── SwapApiClient ───────────────────────────────────────
 // Swap 交易相关：quote / build / submit / detail / history
-// base URL: apipro-test-new.gateweb3.cc (MARKET_TOKEN_URL)
+// base URL: MARKET_TOKEN_URL（getMarketTokenUrl()）
 // 公网路径: /web3api/v3/transaction/... (不带 internal)
 
 export class SwapApiClient {
