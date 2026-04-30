@@ -16,11 +16,13 @@
 > 用途：交易签名前的安全校验（checkin 接口）
 > 触发命令：任何写入类操作（transfer / swap）会先调 GV checkin
 
+> 根域名权威源：`plugin-web/apps/background/utils/gt-api/index.ts:551-554`
+
 | 环境 | URL | 状态 | 备注 |
 |---|---|---|---|
-| test | `https://test-api.web3gate.io/api/plug/v1/web3-gv-api` | ☐ | |
-| pre  | `https://pre-api.web3gate.io/api/plug/v1/web3-gv-api`  | ☐ | |
-| prod | `https://api.web3gate.io/api/plug/v1/web3-gv-api`       | ☐ | |
+| test | `https://test-api.web3gate.io/api/plug/v1/web3-gv-api` | ✅ | 根域名与 plugin-web 一致 |
+| pre  | `https://pre-api.web3gate.io/api/plug/v1/web3-gv-api`  | ✅ | 根域名与 plugin-web 一致 |
+| prod | `https://api.web3gate.io/api/plug/v1/web3-gv-api`       | ✅ | 根域名与 plugin-web 一致 |
 
 ---
 
@@ -29,17 +31,19 @@
 > 用途：拉取 web3_domain 列表（gateway-client 用的主域名来源）
 > 触发命令：任何调用 gateway 网关的命令（token-list / 链配置等）
 
+> 权威源：`web3-wallet-plugin-web/apps/background/utils/gt-remote-config.ts`（gate-dex-cli 直接复制）
+
 | 环境 | CDN host | 状态 | 备注 |
 |---|---|---|---|
-| test | `web3-wallet-cdn-test.gateweb3.cc` | ☐ | |
-| pre  | `web3-wallet-cdn-pre.gateweb3.cc`  | ☐ | |
-| prod | `api.freshmarkethome.com/api/plug/v1/web3-wallet-cdn` | ☐ | prod 7 host 列表第 1 个 |
-| prod | `api.freshmarketpage.com/api/plug/v1/web3-wallet-cdn` | ☐ | |
-| prod | `api.gateweb3.io/api/plug/v1/web3-wallet-cdn`         | ☐ | |
-| prod | `api.ldd678.com/api/plug/v1/web3-wallet-cdn`          | ☐ | |
-| prod | `api.web3gate.cc/api/plug/v1/web3-wallet-cdn`         | ☐ | |
-| prod | `api.web3gate.io/api/plug/v1/web3-wallet-cdn`         | ☐ | |
-| prod | `web3-wallet-cdn-prod.gateweb3.cc`                    | ☐ | |
+| test | `web3-wallet-cdn-test.gateweb3.cc` | ✅ | 与 plugin-web 一致 |
+| pre  | `web3-wallet-cdn-pre.gateweb3.cc`  | ✅ | 与 plugin-web 一致 |
+| prod | `api.freshmarkethome.com/api/plug/v1/web3-wallet-cdn` | ✅ | prod 7 host 列表，与 plugin-web 一致 |
+| prod | `api.freshmarketpage.com/api/plug/v1/web3-wallet-cdn` | ✅ | |
+| prod | `api.gateweb3.io/api/plug/v1/web3-wallet-cdn`         | ✅ | |
+| prod | `api.ldd678.com/api/plug/v1/web3-wallet-cdn`          | ✅ | |
+| prod | `api.web3gate.cc/api/plug/v1/web3-wallet-cdn`         | ✅ | |
+| prod | `api.web3gate.io/api/plug/v1/web3-wallet-cdn`         | ✅ | |
+| prod | `web3-wallet-cdn-prod.gateweb3.cc`                    | ✅ | |
 
 ---
 
@@ -48,11 +52,13 @@
 > 用途：pre 环境跳过 CDN 拉取，直接使用这些 host 作为 web3_domain
 > 仅 pre 环境使用；dev / prod 走 CDN 动态拉取
 
+> 权威源：`web3-wallet-plugin-web/apps/background/utils/gt-remote-config.ts:430-432`（gate-dex-cli 直接复制）
+
 | 环境 | host | 状态 | 备注 |
 |---|---|---|---|
-| pre | `http://pre-api.ldd710.com` | ☐ | |
-| pre | `http://pre-api.ldd711.com` | ☐ | |
-| pre | `http://pre-api.ldd712.com` | ☐ | |
+| pre | `http://pre-api.ldd710.com` | ✅ | 与 plugin-web 一致 |
+| pre | `http://pre-api.ldd711.com` | ✅ | 与 plugin-web 一致 |
+| pre | `http://pre-api.ldd712.com` | ✅ | 与 plugin-web 一致 |
 
 ---
 
