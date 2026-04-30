@@ -4,10 +4,26 @@
  *
  * 各业务 base URL 默认走 prod，可通过环境变量覆盖：
  *   - WALLET_SERVICE_URL  → wallet service (gateio-service-web3-wallet)
- *   - BW_SERVICE_URL      → bw service (web3-business-wallet)
+ *   - BW_SERVICE_URL      → bw service (web3-business-wallet)，登录后业务调用
+ *   - BIZ_WALLET_URL      → web3-business-wallet 走 webapi 网关的入口，登录前置流程专用
  *   - MARKET_TOKEN_URL    → market token service (gateio_service_web3_trade_token)
- *   - BIZ_WALLET_URL      → web3-business-wallet 网关（登录接口用）
  *   - DATA_API_URL        → data api
+ *
+ * ⚠️ BIZ_WALLET_URL vs BW_SERVICE_URL 区别（不能合并！）：
+ *   ┌──────────────┬─────────────────────────────────────────┬──────────────────────────────┐
+ *   │ 维度         │ BIZ_WALLET_URL                          │ BW_SERVICE_URL               │
+ *   ├──────────────┼─────────────────────────────────────────┼──────────────────────────────┤
+ *   │ 性质         │ webapi 网关入口                         │ 直连业务服务                 │
+ *   │ 域名         │ webapi.gateweb3.cc/.../web3-business-wallet │ web3-business-wallet-{env}.* │
+ *   │ 路径前缀     │ /api/web/v1/web3-business-wallet/...    │ 无前缀，直接打业务路径       │
+ *   │ 用途         │ OAuth Device Flow 登录 + merchant 凭证  │ 登录后所有业务调用           │
+ *   │ 公网暴露     │ ✅ 走公网网关（CDN/WAF/限流在此）       │ ❌ prod 多数仅内网            │
+ *   └──────────────┴─────────────────────────────────────────┴──────────────────────────────┘
+ *   不能合并的核心约束：
+ *   1. OAuth callback 与 cookie 域名绑定网关（webapi.gateweb3.cc），不能用直连 BW 域名
+ *   2. prod 上两者通常不在同一集群（网关后挂一组微服务，BW 只是其一）
+ *   3. 路径前缀不同，合并会要求代码按场景动态拼前缀，反而更复杂
+ *   4. 登录类接口需 WAF/风控，业务类接口要低延迟，运维分两条路
  */
 
 import { getOrCreateDeviceToken } from "./token-store.js";
