@@ -39,13 +39,24 @@ const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-prod.gateweb3.cc
 // 公网部署务必通过 BW_SERVICE_URL 环境变量显式注入实际可达地址。
 const DEFAULT_BW_SERVICE_URL = "http://web3-ingress-prod.gateweb3.io/web3-business-wallet";
 const DEFAULT_MARKET_TOKEN_URL = "https://apipro-prod.gateweb3.cc";
+const DEFAULT_BIZ_WALLET_URL = "https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet";
+const DEFAULT_DATA_API_URL = "https://web3-data-api-prod.gateweb3.cc";
+
+// 从 env 读取 URL；空串、纯空白、缺 http(s) 协议的值一律视为未设置，回落默认。
+// Why: GateClaw / 其他 runtime 偶尔会注入空字符串，?? 不接管空串，会让 fetch
+// 拼出 "/v1/..." 这种相对 URL 直接抛 "fetch() URL is invalid"。
+function readEnvUrl(key: string, fallback: string): string {
+  const raw = process.env[key]?.trim();
+  if (raw && /^https?:\/\//i.test(raw)) return raw.replace(/\/+$/, "");
+  return fallback;
+}
 
 export function getWalletServiceUrl(): string {
-  return process.env["WALLET_SERVICE_URL"] ?? DEFAULT_WALLET_SERVICE_URL;
+  return readEnvUrl("WALLET_SERVICE_URL", DEFAULT_WALLET_SERVICE_URL);
 }
 
 export function getBwServiceUrl(): string {
-  return process.env["BW_SERVICE_URL"] ?? DEFAULT_BW_SERVICE_URL;
+  return readEnvUrl("BW_SERVICE_URL", DEFAULT_BW_SERVICE_URL);
 }
 
 /**
@@ -54,10 +65,7 @@ export function getBwServiceUrl(): string {
  * 登录的完整路径：`{BIZ_WALLET_URL}/v1/wallet/oauth/{gate|google}/device/{start|poll}`
  */
 export function getBizWalletUrl(): string {
-  return (
-    process.env["BIZ_WALLET_URL"] ??
-    "https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet"
-  );
+  return readEnvUrl("BIZ_WALLET_URL", DEFAULT_BIZ_WALLET_URL);
 }
 
 interface MerchantCredentials {
@@ -106,7 +114,7 @@ export function getBwAppId(): string {
 }
 
 export function getMarketTokenUrl(): string {
-  return process.env["MARKET_TOKEN_URL"] ?? DEFAULT_MARKET_TOKEN_URL;
+  return readEnvUrl("MARKET_TOKEN_URL", DEFAULT_MARKET_TOKEN_URL);
 }
 
 // ─── 公共类型 ──────────────────────────────────────────────
@@ -967,7 +975,7 @@ export function createMarketApiClient(): MarketApiClient {
 }
 
 export function getDataApiUrl(): string {
-  return process.env["DATA_API_URL"] ?? "https://web3-data-api-prod.gateweb3.cc";
+  return readEnvUrl("DATA_API_URL", DEFAULT_DATA_API_URL);
 }
 
 export function createDataApiClient(): DataApiClient {

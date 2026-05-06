@@ -209,4 +209,4 @@ gate-dex
 
 ## AI Agent integration
 
-> AI Agent Skills have been migrated to **[web3-wallet-skill](https://github.com/gate/gate-skills/tree/master/skills/gate-dex-wallet)** — visit that repo for installation and usage.
+> AI Agent Skills have been migrated to **[web3-wallet-skill](https://github.com/gate/gate-skills/tree/master/skills/gate-dex-wallet-cli)** — visit that repo for installation and usage.
