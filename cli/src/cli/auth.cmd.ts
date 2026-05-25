@@ -9,12 +9,12 @@ import {
   getAuthFilePath,
   getBwAccessToken,
   getOrCreateDeviceToken,
-  buildUserAgent,
 } from "../core/token-store.js";
 import {
   GvClient,
   getGvBaseUrl,
 } from "../core/gv-client.js";
+import { clientHeaders } from "../core/client-headers.js";
 import {
   createWalletApiClient,
   createBwApiClient,
@@ -709,8 +709,8 @@ export function registerShortcutCommands(program: Command) {
         const chainIdIn = Number(opts.fromChain ?? 1);
         const chainIdOut = Number(opts.toChain ?? opts.fromChain ?? 1);
         let wallet = opts.wallet;
+        const quoteAuth = loadAuth();
         if (!wallet) {
-          const quoteAuth = loadAuth();
           if (!quoteAuth?.user_id) throw new Error("Not logged in. Run: login");
           wallet = chainIdIn === 501 ? quoteAuth.sol_address : quoteAuth.evm_address;
         }
@@ -718,7 +718,7 @@ export function registerShortcutCommands(program: Command) {
         const slippage = rawSlippage >= 1 ? rawSlippage / 100 : rawSlippage;
 
         const spinner = ora("获取报价...").start();
-        const result = await createSwapApiClient().quote({
+        const result = await createSwapApiClient(quoteAuth ? getBwAccessToken(quoteAuth) : undefined).quote({
           chain_id_in: chainIdIn,
           chain_id_out: chainIdOut,
           token_in: opts.from ?? "-",
@@ -774,7 +774,7 @@ export function registerShortcutCommands(program: Command) {
 
         // Step 2: Quote (preview only — swapPrepare will re-quote internally)
         const quoteSpinner = ora("获取报价...").start();
-        const swapApi = createSwapApiClient();
+        const swapApi = createSwapApiClient(getBwAccessToken(swapAuth));
         const quoteResult = (await swapApi.quote({
           chain_id_in: chainIdIn,
           chain_id_out: chainIdOut,
@@ -961,8 +961,10 @@ export function registerShortcutCommands(program: Command) {
     .argument("<order_id>", "交易 order ID")
     .action(async function (this: Command, orderId: string) {
       try {
+        const auth = loadAuth();
+        if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询兑换详情...").start();
-        const result = await createSwapApiClient().swapDetail(orderId);
+        const result = await createSwapApiClient(getBwAccessToken(auth)).swapDetail(orderId);
         spinner.succeed("查询成功");
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
@@ -1174,7 +1176,7 @@ export function registerShortcutCommands(program: Command) {
         const auth = loadAuth();
         if (!auth?.user_id) throw new Error("Not logged in. Run: login");
         const spinner = ora("查询 Swap 历史...").start();
-        const result = await createSwapApiClient().swapHistory({
+        const result = await createSwapApiClient(getBwAccessToken(auth)).swapHistory({
           accountId: auth.account_id ?? auth.user_id,
           pageNum: opts.page ? Number(opts.page) : 1,
           pageSize: opts.limit ? Number(opts.limit) : 20,
@@ -1301,7 +1303,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询 Token 列表...").start();
-        const client = createMarketApiClient();
+        const client = createMarketApiClient(loadAuth()?.mcp_token);
         const result = await client.listSwapBridgeTokens({
           chain: opts.chain?.toLowerCase(),
           search: opts.search,
@@ -1323,7 +1325,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询跨链桥 Token...").start();
-        const client = createMarketApiClient();
+        const client = createMarketApiClient(loadAuth()?.mcp_token);
         const result = await client.listSwapBridgeTokens({
           sourceChain: opts.srcChain?.toLowerCase(),
           chain: opts.destChain?.toLowerCase(),
@@ -1346,7 +1348,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询 Token 详情...").start();
-        const client = createDataApiClient();
+        const client = createDataApiClient(loadAuth()?.mcp_token);
         const result = await client.tokenQuery({
           chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
           address: opts.address ? { eq: opts.address } : undefined,
@@ -1366,7 +1368,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询安全审计信息...").start();
-        const client = createDataApiClient();
+        const client = createDataApiClient(loadAuth()?.mcp_token);
         const result = await client.getSecurityRiskInfos((opts.chain ?? "").toLowerCase(), opts.address ?? "");
         spinner.succeed("查询成功");
         console.log(JSON.stringify(result, null, 2));
@@ -1383,7 +1385,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询排行榜...").start();
-        const client = createDataApiClient();
+        const client = createDataApiClient(loadAuth()?.mcp_token);
         const limit = opts.limit ? Number(opts.limit) : 10;
         const direction = (opts.direction ?? "desc") as "asc" | "desc";
         const result = await client.tokenQuery({
@@ -1407,7 +1409,7 @@ export function registerShortcutCommands(program: Command) {
     .action(async function (this: Command, opts: Record<string, string | undefined>) {
       try {
         const spinner = ora("查询新 Token...").start();
-        const client = createDataApiClient();
+        const client = createDataApiClient(loadAuth()?.mcp_token);
         const end = opts.end ?? new Date().toISOString();
         const result = await client.tokenQuery({
           chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
@@ -1523,8 +1525,8 @@ async function loginGoogleViaRest(noOpen = false) {
     const res = await fetch(`${baseUrl}/v1/wallet/oauth/google/device/start`, {
       method: "POST",
       headers: {
+        ...clientHeaders(),
         "Content-Type": "application/json",
-        "User-Agent": buildUserAgent(),
         "x-gtweb3-device-token": getOrCreateDeviceToken(),
         "x-gtweb3-app-id": getBwAppId(),
         "source": "3",
@@ -1607,8 +1609,8 @@ async function loginGoogleViaRest(noOpen = false) {
       const res = await fetch(`${baseUrl}/v1/wallet/oauth/google/device/poll`, {
         method: "POST",
         headers: {
+          ...clientHeaders(),
           "Content-Type": "application/json",
-          "User-Agent": buildUserAgent(),
           "x-gtweb3-device-token": getOrCreateDeviceToken(),
           "x-gtweb3-app-id": getBwAppId(),
           "source": "3",
@@ -1713,8 +1715,8 @@ async function loginGateViaRest(noOpen = false) {
     const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/start`, {
       method: "POST",
       headers: {
+        ...clientHeaders(),
         "Content-Type": "application/json",
-        "User-Agent": buildUserAgent(),
         "x-gtweb3-device-token": getOrCreateDeviceToken(),
         "x-gtweb3-app-id": getBwAppId(),
         "source": "3",
@@ -1785,8 +1787,8 @@ async function loginGateViaRest(noOpen = false) {
       const res = await fetch(`${baseUrl}/v1/wallet/oauth/gate/device/poll`, {
         method: "POST",
         headers: {
+          ...clientHeaders(),
           "Content-Type": "application/json",
-          "User-Agent": buildUserAgent(),
           "x-gtweb3-device-token": getOrCreateDeviceToken(),
           "x-gtweb3-app-id": getBwAppId(),
           "source": "3",

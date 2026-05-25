@@ -2,45 +2,36 @@
  * Gate Dex REST API Client
  * 直接调用业务接口，替代 MCP tool 调用
  *
- * 各业务 base URL 默认走 prod，可通过环境变量覆盖：
+ * 各业务 base URL 默认走 AI 网关（prod），可通过环境变量覆盖：
+ *   - AI_GATEWAY_URL      → AI 网关统一域名，整体覆盖下列 5 个服务的默认 base
  *   - WALLET_SERVICE_URL  → wallet service (gateio-service-web3-wallet)
  *   - BW_SERVICE_URL      → bw service (web3-business-wallet)，登录后业务调用
- *   - BIZ_WALLET_URL      → web3-business-wallet 走 webapi 网关的入口，登录前置流程专用
+ *   - BIZ_WALLET_URL      → web3-business-wallet 登录前置流程入口（OAuth + merchant）
  *   - MARKET_TOKEN_URL    → market token service (gateio_service_web3_trade_token)
  *   - DATA_API_URL        → data api
+ * 单服务 *_URL 优先级高于 AI_GATEWAY_URL，可精确覆盖或降级单个服务。
+ * GV_URL / CDN_DOMAINS 不经 AI 网关，维持直连。
  *
- * ⚠️ BIZ_WALLET_URL vs BW_SERVICE_URL 区别（不能合并！）：
- *   ┌──────────────┬─────────────────────────────────────────┬──────────────────────────────┐
- *   │ 维度         │ BIZ_WALLET_URL                          │ BW_SERVICE_URL               │
- *   ├──────────────┼─────────────────────────────────────────┼──────────────────────────────┤
- *   │ 性质         │ webapi 网关入口                         │ 直连业务服务                 │
- *   │ 域名         │ webapi.gateweb3.cc/.../web3-business-wallet │ web3-business-wallet-{env}.* │
- *   │ 路径前缀     │ /api/web/v1/web3-business-wallet/...    │ 无前缀，直接打业务路径       │
- *   │ 用途         │ OAuth Device Flow 登录 + merchant 凭证  │ 登录后所有业务调用           │
- *   │ 公网暴露     │ ✅ 走公网网关（CDN/WAF/限流在此）       │ ❌ prod 多数仅内网            │
- *   └──────────────┴─────────────────────────────────────────┴──────────────────────────────┘
- *   不能合并的核心约束：
- *   1. OAuth callback 与 cookie 域名绑定网关（webapi.gateweb3.cc），不能用直连 BW 域名
- *   2. prod 上两者通常不在同一集群（网关后挂一组微服务，BW 只是其一）
- *   3. 路径前缀不同，合并会要求代码按场景动态拼前缀，反而更复杂
- *   4. 登录类接口需 WAF/风控，业务类接口要低延迟，运维分两条路
+ * ⚠️ BIZ_WALLET_URL vs BW_SERVICE_URL：仍是两个独立变量，不要合二为一。
+ *   - BIZ_WALLET_URL = 登录前置流程（OAuth Device Flow + merchant 凭证），
+ *     gateway path /web3-business-wallet/v1/wallet/{oauth,config}/...
+ *   - BW_SERVICE_URL = 登录后业务调用（签名等），
+ *     gateway path /web3-business-wallet/v1/wallet/quick/...
+ *   接入 AI 网关后两者 base 相同（{AI_GATEWAY_URL}/web3-business-wallet），
+ *   网关按 longest-prefix 对子路径二次分发：quick/* 走 BW 业务 LB 并做 web3_v2 验签，
+ *   oauth、config/* 走 webapi 公网 LB。保留两个变量是为了能独立覆盖 / 降级单个服务。
+ *   注意：直连降级 URL 历史上多一段 web（/api/web/v1/web3-business-wallet/...），
+ *   跟网关前缀（/web3-business-wallet/...）不要混。
  */
 
 import { getOrCreateDeviceToken } from "./token-store.js";
+import { clientHeaders } from "./client-headers.js";
 
 function bwDeviceToken(): string {
   return getOrCreateDeviceToken();
 }
 
 // ─── URL 配置 ──────────────────────────────────────────────
-
-const DEFAULT_WALLET_SERVICE_URL = "https://web3-wallet-service-prod.gateweb3.cc";
-// 注意：服务注册中心未对外暴露 BW prod 公网域名，仅有内网入口。
-// 公网部署务必通过 BW_SERVICE_URL 环境变量显式注入实际可达地址。
-const DEFAULT_BW_SERVICE_URL = "http://web3-ingress-prod.gateweb3.io/web3-business-wallet";
-const DEFAULT_MARKET_TOKEN_URL = "https://apipro-prod.gateweb3.cc";
-const DEFAULT_BIZ_WALLET_URL = "https://webapi.gateweb3.cc/api/web/v1/web3-business-wallet";
-const DEFAULT_DATA_API_URL = "https://web3-data-api-prod.gateweb3.cc";
 
 // 从 env 读取 URL；空串、纯空白、缺 http(s) 协议的值一律视为未设置，回落默认。
 // Why: GateClaw / 其他 runtime 偶尔会注入空字符串，?? 不接管空串，会让 fetch
@@ -51,12 +42,43 @@ function readEnvUrl(key: string, fallback: string): string {
   return fallback;
 }
 
+// AI 网关统一接入：BIZ_WALLET / BW_SERVICE / WALLET_SERVICE / MARKET_TOKEN /
+// DATA_API 共 5 个服务默认走同一个 AI 网关域名，由网关按 path 前缀分发到各业务 LB，
+// 前端路径代码无需改变。GV / CDN 动态网关不在迁移范围，维持各自直连。
+//   - AI_GATEWAY_URL    整体覆盖这 5 个服务的网关域名
+//   - 各服务单独的 *_URL 变量优先级更高，可精确覆盖单个服务（降级回退用）
+const DEFAULT_AI_GATEWAY_URL = "https://ai-gw.gateweb3.cc";
+
+// 网关业务前缀:
+//   - 钱包: https://gtglobal.jp.larksuite.com/wiki/MNO1w7yZMi6uaEkVyTbjOfzcpDV
+//   - 交易: https://gtglobal.jp.larksuite.com/wiki/BYG7wHqXfiTROxkF8u5j1wg4pvb
+// 规则: api-test.gate-cli.com/<业务名称>/<服务内部路径>
+// 这里的业务名称跟「单服务直连 URL」的路径前缀**不一样**，切换时不要混。
+const BW_GATEWAY_PATH = "/web3-business-wallet";
+const WALLET_GATEWAY_PATH = "/gateio-service-web3-wallet-service";
+// Swap 流在网关侧拆成 3 个独立业务：quote/build/biz-swapapi（submit、history、swapDetail 共用）。
+// 直连降级时仍是单一 apipro host 一并提供，所以 MARKET_TOKEN_URL 一旦设置就 override 全部三个。
+const SWAP_QUOTE_GATEWAY_PATH = "/gateio-service-web3-route";
+const SWAP_BUILD_GATEWAY_PATH = "/gateio-service-web3-build";
+const SWAP_BIZ_GATEWAY_PATH = "/gateio-service-web3-biz-swapapi";
+// 行情 / Token 列表 / Data API 也是同样的拆分（doc: https://gtglobal.jp.larksuite.com/wiki/I4KJwtoXlioCtbkDwYnjdLgYphc）：
+const TRADE_TOKEN_API_GATEWAY_PATH = "/gateio-service-web3-trade-tokenapi"; // /web3api/v2/token/*
+const TRADE_TRADE_API_GATEWAY_PATH = "/gateio-service-web3-trade-tradeapi"; // /web3api/v2/trade/*
+const DATA_API_GATEWAY_PATH = "/gateio-service-web3-data-api"; // /v1/base/token/* + /v1/base/token_security/*
+
+// 延迟求值：URL 必须在 .env 加载后才读。cli/index.ts 的 .env 加载写在模块体里，
+// 而本模块经 import 链先于它执行 —— 在「模块加载期」直接读 env 会拿不到 .env 值，
+// 因此 AI_GATEWAY_URL 及各服务默认值一律包进函数，调用时再读。
+function getAiGatewayUrl(): string {
+  return readEnvUrl("AI_GATEWAY_URL", DEFAULT_AI_GATEWAY_URL);
+}
+
 export function getWalletServiceUrl(): string {
-  return readEnvUrl("WALLET_SERVICE_URL", DEFAULT_WALLET_SERVICE_URL);
+  return readEnvUrl("WALLET_SERVICE_URL", `${getAiGatewayUrl()}${WALLET_GATEWAY_PATH}`);
 }
 
 export function getBwServiceUrl(): string {
-  return readEnvUrl("BW_SERVICE_URL", DEFAULT_BW_SERVICE_URL);
+  return readEnvUrl("BW_SERVICE_URL", `${getAiGatewayUrl()}${BW_GATEWAY_PATH}`);
 }
 
 /**
@@ -65,7 +87,40 @@ export function getBwServiceUrl(): string {
  * 登录的完整路径：`{BIZ_WALLET_URL}/v1/wallet/oauth/{gate|google}/device/{start|poll}`
  */
 export function getBizWalletUrl(): string {
-  return readEnvUrl("BIZ_WALLET_URL", DEFAULT_BIZ_WALLET_URL);
+  return readEnvUrl("BIZ_WALLET_URL", `${getAiGatewayUrl()}${BW_GATEWAY_PATH}`);
+}
+
+/**
+ * Swap 流的 3 个网关 base URL。
+ * MARKET_TOKEN_URL 一旦设置（降级直连 apipro），会同时覆盖三者 —— 因为直连模式下
+ * apipro 单主机就提供了 quote/build/submit 全部 path。
+ */
+export function getSwapQuoteBaseUrl(): string {
+  return readEnvUrl("MARKET_TOKEN_URL", `${getAiGatewayUrl()}${SWAP_QUOTE_GATEWAY_PATH}`);
+}
+
+export function getSwapBuildBaseUrl(): string {
+  return readEnvUrl("MARKET_TOKEN_URL", `${getAiGatewayUrl()}${SWAP_BUILD_GATEWAY_PATH}`);
+}
+
+export function getSwapBizBaseUrl(): string {
+  return readEnvUrl("MARKET_TOKEN_URL", `${getAiGatewayUrl()}${SWAP_BIZ_GATEWAY_PATH}`);
+}
+
+/**
+ * Token 列表（swap-tokens / bridge-tokens）base URL。
+ * 直连降级走 MARKET_TOKEN_URL（apipro 单主机覆盖所有 /web3api/v2/* path）。
+ */
+export function getTradeTokenApiBaseUrl(): string {
+  return readEnvUrl("MARKET_TOKEN_URL", `${getAiGatewayUrl()}${TRADE_TOKEN_API_GATEWAY_PATH}`);
+}
+
+/**
+ * 行情（kline / volume_stats / pair_liquidity）base URL。
+ * 直连降级同上由 MARKET_TOKEN_URL 覆盖。
+ */
+export function getTradeTradeApiBaseUrl(): string {
+  return readEnvUrl("MARKET_TOKEN_URL", `${getAiGatewayUrl()}${TRADE_TRADE_API_GATEWAY_PATH}`);
 }
 
 interface MerchantCredentials {
@@ -90,7 +145,7 @@ export async function fetchMerchantCredentials(): Promise<MerchantCredentials> {
   }
   const url = `${getBizWalletUrl()}/v1/wallet/config/merchant`;
   const res = await fetch(url, {
-    headers: { "x-gtweb3-app-id": getBwAppId() },
+    headers: { ...clientHeaders(), "x-gtweb3-app-id": getBwAppId() },
   });
   const json = (await res.json()) as {
     code: number;
@@ -111,10 +166,6 @@ export async function fetchMerchantCredentials(): Promise<MerchantCredentials> {
  */
 export function getBwAppId(): string {
   return process.env["BW_APP_ID"] ?? "mcp_wallet_yikFT6";
-}
-
-export function getMarketTokenUrl(): string {
-  return readEnvUrl("MARKET_TOKEN_URL", DEFAULT_MARKET_TOKEN_URL);
 }
 
 // ─── 公共类型 ──────────────────────────────────────────────
@@ -189,7 +240,7 @@ async function postJson<T>(
   headers: Record<string, string>,
   body: unknown,
 ): Promise<T> {
-  const allHeaders = { "Content-Type": "application/json", ...headers };
+  const allHeaders = { ...clientHeaders(), "Content-Type": "application/json", ...headers };
   const bodyStr = JSON.stringify(body);
   const res = await fetch(url, {
     method: "POST",
@@ -546,9 +597,11 @@ export interface ListSwapBridgeTokensResult {
 
 export class MarketApiClient {
   private readonly baseUrl: string;
+  private readonly accessToken: string | undefined;
 
-  constructor(opts: { baseUrl: string }) {
+  constructor(opts: { baseUrl: string; accessToken?: string }) {
     this.baseUrl = opts.baseUrl;
+    this.accessToken = opts.accessToken;
   }
 
   /**
@@ -580,9 +633,14 @@ export class MarketApiClient {
     if (opts.sourceAddress) params.set("source_address", opts.sourceAddress);
 
     const url = `${this.baseUrl}/web3api/v2/token/swap_bridge_list?${params.toString()}`;
-    const res = await fetch(url, {
-      headers: { "X-Gtweb3-Device-Type": "3" },
-    });
+    // 上游网关只要求 x-gtweb3-app-id 校验 appKey，Authorization 仅在登录后可选附加（个性化）。
+    const headers: Record<string, string> = {
+      ...clientHeaders(),
+      "X-Gtweb3-Device-Type": "3",
+      "x-gtweb3-app-id": getBwAppId(),
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
+    const res = await fetch(url, { headers });
     const json = (await res.json()) as { code: number; message?: string; data: ListSwapBridgeTokensResult };
     if (json.code !== 0) {
       throw new Error(`API 请求失败 [/web3api/v2/token/swap_bridge_list] (code=${json.code}): ${json.message ?? "unknown error"}`);
@@ -640,16 +698,24 @@ export interface TokenQueryResult {
 
 export class DataApiClient {
   private readonly baseUrl: string;
+  private readonly accessToken: string | undefined;
 
-  constructor(opts: { baseUrl: string }) {
+  constructor(opts: { baseUrl: string; accessToken?: string }) {
     this.baseUrl = opts.baseUrl;
+    this.accessToken = opts.accessToken;
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+    // Authorization 可选：有 token 就带（用于个性化），没有也不影响数据返回。
+    const headers: Record<string, string> = {
+      ...clientHeaders(),
+      "Content-Type": "application/json",
+    };
+    if (this.accessToken) headers.Authorization = `Bearer ${this.accessToken}`;
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
     });
     const json = (await res.json()) as { code: number; message?: string; data: T };
@@ -714,7 +780,7 @@ export class MarketTradeClient {
       if (v != null && v !== "") q.set(k, String(v));
     }
     const url = `${this.baseUrl}${path}?${q.toString()}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: clientHeaders() });
     const json = (await res.json()) as { code: number; message?: string; data: T };
     if (json.code !== 0) {
       throw new Error(`API 请求失败 [${path}] (code=${json.code}): ${json.message ?? "unknown error"}`);
@@ -794,20 +860,28 @@ export interface BuildV3Resp {
 
 // ─── SwapApiClient ───────────────────────────────────────
 // Swap 交易相关：quote / build / submit / detail / history
-// base URL: MARKET_TOKEN_URL（getMarketTokenUrl()）
-// 公网路径: /web3api/v3/transaction/... (不带 internal)
+// AI 网关模式下三段 path 走三个不同业务前缀（getSwapQuoteBaseUrl / getSwapBuildBaseUrl /
+// getSwapBizBaseUrl），降级直连模式下 MARKET_TOKEN_URL 同时覆盖三者。
+// 服务内部路径: /web3api/v3/transaction/...
 
 export class SwapApiClient {
-  private readonly baseUrl: string;
   private readonly tradeSource: string;
+  private readonly accessToken: string | undefined;
 
-  constructor(opts: { baseUrl: string; tradeSource?: string }) {
-    this.baseUrl = opts.baseUrl;
+  constructor(opts: { tradeSource?: string; accessToken?: string }) {
     this.tradeSource = opts.tradeSource ?? "trade-ai";
+    this.accessToken = opts.accessToken;
   }
 
   private headers(): Record<string, string> {
-    return { "x-gtweb3-trade-source": this.tradeSource };
+    // 上游网关只要求 x-gtweb3-app-id 校验 appKey，Authorization 仅在登录后可选附加（个性化）。
+    const h: Record<string, string> = {
+      ...clientHeaders(),
+      "x-gtweb3-trade-source": this.tradeSource,
+      "x-gtweb3-app-id": getBwAppId(),
+    };
+    if (this.accessToken) h.Authorization = `Bearer ${this.accessToken}`;
+    return h;
   }
 
   /** 获取兑换报价 POST /web3api/v3/transaction/quote */
@@ -828,7 +902,7 @@ export class SwapApiClient {
     extra_data?: Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
     const body = { slippage_type: 1, swap_type: 1, ...req };
-    const url = `${this.baseUrl}/web3api/v3/transaction/quote`;
+    const url = `${getSwapQuoteBaseUrl()}/web3api/v3/transaction/quote`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
@@ -856,7 +930,7 @@ export class SwapApiClient {
     userAgent?: string;
     source?: string;
   }): Promise<BuildV3Resp> {
-    const url = `${this.baseUrl}/web3api/v3/transaction/build`;
+    const url = `${getSwapBuildBaseUrl()}/web3api/v3/transaction/build`;
     const body = {
       projectId: req.projectId,
       params: req.params,
@@ -887,7 +961,7 @@ export class SwapApiClient {
 
   /** 提交兑换 POST /web3api/v3/transaction/submit */
   async submit(req: Record<string, unknown>): Promise<unknown> {
-    const url = `${this.baseUrl}/web3api/v3/transaction/submit`;
+    const url = `${getSwapBizBaseUrl()}/web3api/v3/transaction/submit`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
@@ -902,7 +976,7 @@ export class SwapApiClient {
 
   /** 查询兑换详情 POST /web3api/v3/transaction/history/swap/detail */
   async swapDetail(txOrderId: string): Promise<unknown> {
-    const url = `${this.baseUrl}/web3api/v3/transaction/history/swap/detail`;
+    const url = `${getSwapBizBaseUrl()}/web3api/v3/transaction/history/swap/detail`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { ...this.headers(), "Content-Type": "application/json" },
@@ -933,7 +1007,7 @@ export class SwapApiClient {
     if (opts.endTime) params.set("endTime", opts.endTime);
     if (opts.srcChain) params.set("srcChain", String(opts.srcChain));
     if (opts.dstChain) params.set("dstChain", String(opts.dstChain));
-    const url = `${this.baseUrl}/web3api/v3/transaction/history?${params.toString()}`;
+    const url = `${getSwapBizBaseUrl()}/web3api/v3/transaction/history?${params.toString()}`;
     const resp = await fetch(url, { headers: this.headers() });
     const json = (await resp.json()) as { code: number; message?: string; data: unknown; status?: number };
     if (json.code !== 0 && json.status !== 200) {
@@ -970,22 +1044,22 @@ export async function createBwApiClient(accessToken: string): Promise<BwApiClien
   });
 }
 
-export function createMarketApiClient(): MarketApiClient {
-  return new MarketApiClient({ baseUrl: getMarketTokenUrl() });
+export function createMarketApiClient(accessToken?: string): MarketApiClient {
+  return new MarketApiClient({ baseUrl: getTradeTokenApiBaseUrl(), accessToken });
 }
 
 export function getDataApiUrl(): string {
-  return readEnvUrl("DATA_API_URL", DEFAULT_DATA_API_URL);
+  return readEnvUrl("DATA_API_URL", `${getAiGatewayUrl()}${DATA_API_GATEWAY_PATH}`);
 }
 
-export function createDataApiClient(): DataApiClient {
-  return new DataApiClient({ baseUrl: getDataApiUrl() });
+export function createDataApiClient(accessToken?: string): DataApiClient {
+  return new DataApiClient({ baseUrl: getDataApiUrl(), accessToken });
 }
 
 export function createMarketTradeClient(): MarketTradeClient {
-  return new MarketTradeClient({ baseUrl: getMarketTokenUrl() });
+  return new MarketTradeClient({ baseUrl: getTradeTradeApiBaseUrl() });
 }
 
-export function createSwapApiClient(): SwapApiClient {
-  return new SwapApiClient({ baseUrl: getMarketTokenUrl() });
+export function createSwapApiClient(accessToken?: string): SwapApiClient {
+  return new SwapApiClient({ accessToken });
 }

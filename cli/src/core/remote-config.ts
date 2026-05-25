@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAuthDir } from "./token-store.js";
+// 注：CDN 配置发现不经 AI 网关，不注入 x-aiweb3-client 头（见《AI 网关统一接入》方案 §2.2）。
 
 function getCacheFile(): string {
   return join(getAuthDir(), "web3-domain.json");

@@ -6,6 +6,18 @@ process.on("SIGINT", () => {
 });
 process.on("SIGTERM", () => process.exit(143));
 
+// 所有出站请求强制 User-Agent: gate-dex-cli。
+// 后端 access_log 据此统一识别 CLI 调用方,不论是否经 AI 网关。
+// 这里 force-override 已显式设置的 User-Agent,保持值唯一,不允许被业务代码覆盖。
+{
+  const __originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers ?? {});
+    headers.set("User-Agent", "gate-dex-cli");
+    return __originalFetch(input, { ...init, headers });
+  }) as typeof fetch;
+}
+
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

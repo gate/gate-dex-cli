@@ -170,6 +170,7 @@ export class GatewayApiClient {
       body,
       signHeaders,
     );
+    // 注：动态 gateway 不经 AI 网关，不注入 x-aiweb3-client 头（见《AI 网关统一接入》方案 §2.2）。
     return {
       ...signHeaders,
       "x-gtweb3-appsign": appsign,

@@ -122,6 +122,7 @@ export class GvClient {
 
   private buildHeaders(apiPath: string, body: object): Record<string, string> {
     const sig = generateSignature("POST", apiPath, body);
+    // 注：GV 不经 AI 网关，不注入 x-aiweb3-client 头（见《AI 网关统一接入》方案 §2.2）。
     return {
       "Content-Type": "application/json",
       Accept: "application/json, text/plain, */*",
