@@ -1,15 +1,17 @@
 /**
- * 出站请求统一携带的「调用方标识」header。
+ * 出站请求统一携带的「调用方标识 + appKey」header。
  *
- * AI 网关读取这两个 header 写入 access_log，识别请求来源与版本：
- *   - x-aiweb3-client          固定为 "gate-dex-cli"（access_log 的 client 字段）
- *   - x-aiweb3-client-version  当前 CLI 版本号（access_log 的 client_version 字段）
+ * AI 网关读取这些 header 写入 access_log / 校验调用方：
+ *   - x-aiweb3-client          固定为 "gate-dex-cli"（access_log client 字段）
+ *   - x-aiweb3-client-version  当前 CLI 版本号（access_log client_version 字段）
+ *   - x-gtweb3-app-id          BW/Fomox 业务侧 app 标识（网关 appKey 校验用，
+ *                              不参与 web3_v2 appsign 计算）
  *
  * 头名为《AI 网关统一接入》方案 §2.3.1 表格所列，经后端 @hugo-wbe 确认。
  * （方案 §2.2 代码示例曾写作 `x-ai-client`，以确认结果为准。）
  *
- * 这两个 header 不是 gt 前缀的签名头，不参与 web3_v2 appsign 计算，
- * 因此可以安全附加到任何已签名 / 未签名的请求上。
+ * 这些 header 都不是 gt 前缀的签名头，不参与 web3_v2 appsign 计算，
+ * 可以安全附加到任何已签名 / 未签名的请求上。
  */
 
 import { readFileSync } from "node:fs";
@@ -18,6 +20,12 @@ import { fileURLToPath } from "node:url";
 
 /** `x-aiweb3-client` header 固定值。 */
 export const CLIENT_NAME = "gate-dex-cli";
+
+/**
+ * BW/Fomox 业务侧 app 标识（不参与签名）。可被环境变量 BW_APP_ID 覆盖（如自定义部署）。
+ * 这里复制一份默认值避免 client-headers 反向依赖 api-client.ts。
+ */
+const DEFAULT_BW_APP_ID = "mcp_wallet_yikFT6";
 
 let _clientVersion: string | null = null;
 
@@ -53,12 +61,15 @@ export function getClientVersion(): string {
 }
 
 /**
- * 所有出站请求统一附加的 client 标识 header。
+ * 所有 AI 网关请求统一附加的 client 标识 + appKey header。
  * 用法：`headers: { ...clientHeaders(), ...其它 header }`
+ *
+ * 注：GV / 动态 CDN 网关 / remote-config 不经 AI 网关，按方案 §2.2 不注入这些头。
  */
 export function clientHeaders(): Record<string, string> {
   return {
     "x-aiweb3-client": CLIENT_NAME,
     "x-aiweb3-client-version": getClientVersion(),
+    "x-gtweb3-app-id": process.env["BW_APP_ID"] ?? DEFAULT_BW_APP_ID,
   };
 }
