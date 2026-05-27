@@ -12,7 +12,7 @@
 
 | 服务 | 环境变量 | 默认值 | 客户端类 / 模块 |
 |------|----------|--------|-----------------|
-| AI 网关（统一入口） | `AI_GATEWAY_URL` | `https://ai-gw.gateweb3.cc`（prod） | 整体覆盖下列 5 个服务的 base |
+| AI 网关（统一入口） | `AI_GATEWAY_URL` | `https://api.gate-cli.com`（prod） | 整体覆盖下列 5 个服务的 base |
 | 登录网关（webapi） | `BIZ_WALLET_URL` | `{AI_GATEWAY_URL}/web3-business-wallet` | `auth.cmd.ts` |
 | BW 业务服务 | `BW_SERVICE_URL` | `{AI_GATEWAY_URL}/web3-business-wallet` | `BwApiClient` |
 | Wallet 服务 | `WALLET_SERVICE_URL` | `{AI_GATEWAY_URL}/gateio-service-web3-wallet-service` | `WalletApiClient` |

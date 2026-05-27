@@ -47,7 +47,7 @@ function readEnvUrl(key: string, fallback: string): string {
 // 前端路径代码无需改变。GV / CDN 动态网关不在迁移范围，维持各自直连。
 //   - AI_GATEWAY_URL    整体覆盖这 5 个服务的网关域名
 //   - 各服务单独的 *_URL 变量优先级更高，可精确覆盖单个服务（降级回退用）
-const DEFAULT_AI_GATEWAY_URL = "https://ai-gw.gateweb3.cc";
+const DEFAULT_AI_GATEWAY_URL = "https://api.gate-cli.com";
 
 // 网关业务前缀:
 //   - 钱包: https://gtglobal.jp.larksuite.com/wiki/MNO1w7yZMi6uaEkVyTbjOfzcpDV
