@@ -26,12 +26,18 @@ export function getGatewayPrefix(): string {
   return GATEWAY_PREFIX;
 }
 
+// web3_v2 签名凭证默认值取 prod（与 DEFAULT_AI_GATEWAY_URL 默认 prod 对齐）。
+// 与 plugin-web 一致：dev=key7/secret7，prod=4bda.../bcc...（gt-api/index.ts 内 isDev 分支）。
+// 测试环境由 .env 的 BW_APP_KEY=key7 / BW_APP_SECRET=secret7 覆盖。
+const DEFAULT_BW_APP_KEY = "4bda84eb78310b68";
+const DEFAULT_BW_APP_SECRET = "bcc71f4ef3c7e644d6748d33c404b41a";
+
 function getAppKey(): string {
-  return process.env["BW_APP_KEY"] ?? "key7";
+  return process.env["BW_APP_KEY"] ?? DEFAULT_BW_APP_KEY;
 }
 
 function getAppSecret(): string {
-  return process.env["BW_APP_SECRET"] ?? "secret7";
+  return process.env["BW_APP_SECRET"] ?? DEFAULT_BW_APP_SECRET;
 }
 
 // ── 工具 ─────────────────────────────────────────────────────────
