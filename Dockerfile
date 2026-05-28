@@ -17,9 +17,10 @@ RUN printf 'GV_URL=%s\nCDN_DOMAINS=%s\nWEB3_DOMAIN_HOSTS=%s\nWALLET_SERVICE_URL=
 RUN bun install --frozen-lockfile
 RUN node scripts/build-binary.mjs --all --bake-env --env-file /app/.env
 RUN VERSION=$(node -e "console.log(require('./package.json').version)") \
-    && mkdir -p /dist/v${VERSION} \
+    && mkdir -p /dist/v${VERSION} /dist/latest \
     && cp dist/gate-dex-* /dist/v${VERSION}/ \
-    && chmod +x /dist/v${VERSION}/gate-dex-*
+    && cp dist/gate-dex-* /dist/latest/ \
+    && chmod +x /dist/v${VERSION}/gate-dex-* /dist/latest/gate-dex-*
 
 FROM nginx:alpine
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
