@@ -612,8 +612,36 @@ export interface JsonRpcResponse<T = unknown> {
 }
 
 /**
+ * 俗称 → 后端 NetworkKey 别名表。后端 proxy 只认 NetworkKey，
+ * 收到不认识的 key 会返回 `rpc proxy err`。常见俗称与 key 不一致的列在此，
+ * 标准 key 可用 `chain-config` 命令查询。
+ */
+const NETWORK_KEY_ALIASES: Record<string, string> = {
+  POLYGON: "MATIC",
+  POL: "MATIC",
+  POLYGON_ZKEVM: "ZK_MATIC",
+  ZKEVM: "ZK_MATIC",
+  OP: "OPT",
+  OPTIMISM: "OPT",
+  ARBITRUM: "ARB",
+  ARBITRUM_ONE: "ARB",
+  AVALANCHE: "AVAX",
+  ETHEREUM: "ETH",
+  BNB: "BSC",
+  BINANCE: "BSC",
+  SOLANA: "SOL",
+};
+
+/** 把用户传入的链名归一化为后端 NetworkKey（大写 + 别名映射）。 */
+export function normalizeNetworkKey(chain: string): string {
+  const upper = chain.trim().toUpperCase();
+  return NETWORK_KEY_ALIASES[upper] ?? upper;
+}
+
+/**
  * POST /unify/proxy-node/rpc/{chain}
- * chain 是 NetworkKey（ETH / BSC / SOL / POLYGON ...，**大写**）
+ * chain 是 NetworkKey（ETH / BSC / SOL / MATIC ...，**大写**）；
+ * 俗称（POLYGON/OP 等）会经 {@link normalizeNetworkKey} 映射到后端 key。
  *
  * 返回原始 JSON-RPC 响应；调用方需自己处理 `result` / `error`。
  */
@@ -632,7 +660,7 @@ export async function gatewayRpcCall<T = unknown>(
     params: opts.params ?? [],
     id: opts.id ?? 1,
   };
-  const path = `/unify/proxy-node/rpc/${encodeURIComponent(opts.chain.toUpperCase())}`;
+  const path = `/unify/proxy-node/rpc/${encodeURIComponent(normalizeNetworkKey(opts.chain))}`;
   return client.postRaw<JsonRpcResponse<T>>(path, body);
 }
 
