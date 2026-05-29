@@ -3,11 +3,12 @@
 // We decode and apply them to process.env before loading the main module.
 
 // 1. Inject all env vars from the baked-in base64 blob
+//    跳过空值，避免覆盖运行时合法 env / 触发 `process.env.X ?? default` 拿到空串的问题
 const envB64 = process.env.BUNDLED_ENV_B64;
 if (envB64) {
   const envMap = JSON.parse(atob(envB64)) as Record<string, string>;
   for (const [k, v] of Object.entries(envMap)) {
-    process.env[k] = v;
+    if (typeof v === "string" && v.length > 0) process.env[k] = v;
   }
 }
 
