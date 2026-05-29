@@ -410,9 +410,15 @@ function computeAppSign(
   url: string,
   body: unknown,
   signHeaders: Record<string, string>,
+  /** 如果 BW_SERVICE_URL 带了路径前缀（如 AI 网关 /web3-business-wallet 或 ingress 代理），
+   * 签名前需要剥掉，让 path 与 BW 服务端实际看到的"裸 path"对齐。 */
+  basePathToStrip?: string,
 ): string {
   const u = new URL(url);
-  const path = u.pathname;
+  let path = u.pathname;
+  if (basePathToStrip && path.startsWith(basePathToStrip)) {
+    path = path.slice(basePathToStrip.length) || "/";
+  }
 
   // Query string (sorted, lowercase keys)
   let searchParamsStr = "";
@@ -491,6 +497,9 @@ export class BwApiClient {
 
   private allHeaders(method: string, url: string, body: unknown): Record<string, string> {
     const signHeaders = this.buildSignHeaders();
+    // 剥掉 baseUrl 的路径前缀（如 /web3-business-wallet 或 /api/web/v1/web3-business-wallet），
+    // 让签名 path 与 BW 服务端实际接收到的裸 path 对齐（AI 网关会按前缀路由并剥掉前缀转发）。
+    const basePath = new URL(this.baseUrl).pathname.replace(/\/+$/, "");
     const appsign = computeAppSign(
       this.appKey,
       this.appSecret,
@@ -498,6 +507,7 @@ export class BwApiClient {
       url,
       body,
       signHeaders,
+      basePath || undefined,
     );
     return {
       ...signHeaders,
