@@ -1,6 +1,6 @@
 {
   "name": "gate-dex-cli",
-  "version": "1.0.1",
+  "version": "1.0.6",
   "description": "Gate Dex CLI - Custodial Wallet Management Tool",
   "type": "module",
   "main": "dist/cli/index.js",
