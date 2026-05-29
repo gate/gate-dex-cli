@@ -24,6 +24,7 @@ import {
   createSwapApiClient,
   getBizWalletUrl,
   getBwAppId,
+  normalizeMarketChain,
 } from "../core/api-client.js";
 import {
   buildTransferPreview,
@@ -38,6 +39,7 @@ import {
   gatewayChainConfig,
   gatewayRpcCall,
   gatewayTokenList,
+  normalizeNetworkKey,
   gatewayEvmGasPrice,
   gatewayEvmGasLimit,
   gatewaySolGasPrice,
@@ -212,7 +214,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 token 列表...").start();
         const client = createGatewayApiClient(auth.mcp_token);
         const networkKeyList = opts.chain
-          ? opts.chain.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
+          ? opts.chain.split(",").map((s) => normalizeNetworkKey(s.trim())).filter(Boolean)
           : [];
         const result = await gatewayTokenList(client, {
           accountID: auth.account_id ?? auth.user_id,
@@ -1236,7 +1238,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 K 线数据...").start();
         const client = createMarketTradeClient();
         const result = await client.getKline({
-          chain: (opts.chain ?? "").toLowerCase(),
+          chain: normalizeMarketChain(opts.chain),
           tokenAddress: opts.address ?? "",
           period: opts.period ?? "1h",
           pairAddress: opts.pair,
@@ -1261,7 +1263,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询流动性池事件...").start();
         const client = createMarketTradeClient();
         const result = await client.getPairLiquidity({
-          chain: (opts.chain ?? "").toLowerCase(),
+          chain: normalizeMarketChain(opts.chain),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
           pageIndex: opts.page ? Number(opts.page) : undefined,
@@ -1284,7 +1286,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询交易量统计...").start();
         const client = createMarketTradeClient();
         const result = await client.getVolumeStats({
-          chain: (opts.chain ?? "").toLowerCase(),
+          chain: normalizeMarketChain(opts.chain),
           tokenAddress: opts.address ?? "",
           pairAddress: opts.pair,
         });
@@ -1305,7 +1307,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 列表...").start();
         const client = createMarketApiClient(loadAuth()?.mcp_token);
         const result = await client.listSwapBridgeTokens({
-          chain: opts.chain?.toLowerCase(),
+          chain: opts.chain ? normalizeMarketChain(opts.chain) : undefined,
           search: opts.search,
           tag: opts.tag,
         });
@@ -1327,8 +1329,8 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询跨链桥 Token...").start();
         const client = createMarketApiClient(loadAuth()?.mcp_token);
         const result = await client.listSwapBridgeTokens({
-          sourceChain: opts.srcChain?.toLowerCase(),
-          chain: opts.destChain?.toLowerCase(),
+          sourceChain: opts.srcChain ? normalizeMarketChain(opts.srcChain) : undefined,
+          chain: opts.destChain ? normalizeMarketChain(opts.destChain) : undefined,
           sourceAddress: opts.token,
           search: opts.search,
         });
@@ -1350,7 +1352,7 @@ export function registerShortcutCommands(program: Command) {
         const spinner = ora("查询 Token 详情...").start();
         const client = createDataApiClient(loadAuth()?.mcp_token);
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
+          chain: opts.chain ? { in: [normalizeMarketChain(opts.chain)] } : undefined,
           address: opts.address ? { eq: opts.address } : undefined,
           limit: 1,
         });
@@ -1369,7 +1371,7 @@ export function registerShortcutCommands(program: Command) {
       try {
         const spinner = ora("查询安全审计信息...").start();
         const client = createDataApiClient(loadAuth()?.mcp_token);
-        const result = await client.getSecurityRiskInfos((opts.chain ?? "").toLowerCase(), opts.address ?? "");
+        const result = await client.getSecurityRiskInfos(normalizeMarketChain(opts.chain), opts.address ?? "");
         spinner.succeed("查询成功");
         console.log(JSON.stringify(result, null, 2));
       } catch (err) {
@@ -1389,7 +1391,7 @@ export function registerShortcutCommands(program: Command) {
         const limit = opts.limit ? Number(opts.limit) : 10;
         const direction = (opts.direction ?? "desc") as "asc" | "desc";
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
+          chain: opts.chain ? { in: [normalizeMarketChain(opts.chain)] } : undefined,
           sort: [{ field: "trend_info.price_change_24h", order: direction }],
           limit,
         });
@@ -1412,7 +1414,7 @@ export function registerShortcutCommands(program: Command) {
         const client = createDataApiClient(loadAuth()?.mcp_token);
         const end = opts.end ?? new Date().toISOString();
         const result = await client.tokenQuery({
-          chain: opts.chain ? { in: [opts.chain.toLowerCase()] } : undefined,
+          chain: opts.chain ? { in: [normalizeMarketChain(opts.chain)] } : undefined,
           created_at: opts.start ? { range: { start: opts.start, end } } : undefined,
           sort: [{ field: "created_at", order: "desc" }],
           limit: opts.limit ? Number(opts.limit) : 20,

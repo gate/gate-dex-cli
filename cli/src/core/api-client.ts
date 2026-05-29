@@ -42,6 +42,44 @@ function readEnvUrl(key: string, fallback: string): string {
   return fallback;
 }
 
+// 行情 / Token / Data API 的链名俗称归一化。
+// 这套 API 的规范链名**大小写敏感**且命名不统一（多数用全名 solana/arbitrum/optimism/
+// avalanche/polygon/base，但 eth、bsc 用短名），用户/上层 agent 常传 sol、op、ethereum、
+// bnb 等俗称，传错会**静默返回 0 条**（不报错），极易被误判成"无数据/无余额"。
+// 这里统一把俗称映射到行情 API 实际认的规范名。
+// 注意：这与 gateway-client 的 `normalizeNetworkKey`（token-list / RPC 用大写 networkKey
+// 如 OPT/SOL/MATIC）是**两套相反的命名空间**，不要混用。
+const MARKET_CHAIN_ALIASES: Record<string, string> = {
+  ethereum: "eth",
+  ether: "eth",
+  binance: "bsc",
+  bnb: "bsc",
+  "binance-smart-chain": "bsc",
+  binancesmartchain: "bsc",
+  sol: "solana",
+  arb: "arbitrum",
+  arbitrum_one: "arbitrum",
+  "arbitrum-one": "arbitrum",
+  arb1: "arbitrum",
+  op: "optimism",
+  opt: "optimism",
+  "op-mainnet": "optimism",
+  "optimism-mainnet": "optimism",
+  avax: "avalanche",
+  "avalanche-c": "avalanche",
+  avalanche_c: "avalanche",
+  matic: "polygon",
+  pol: "polygon",
+  "polygon-pos": "polygon",
+  polygon_pos: "polygon",
+};
+
+/** 把链名俗称归一化为行情/Token/Data API 实际认的规范名（小写）。空值原样返回空串。 */
+export function normalizeMarketChain(chain: string | undefined | null): string {
+  const k = (chain ?? "").trim().toLowerCase();
+  return MARKET_CHAIN_ALIASES[k] ?? k;
+}
+
 // AI 网关统一接入：BIZ_WALLET / BW_SERVICE / WALLET_SERVICE / MARKET_TOKEN /
 // DATA_API 共 5 个服务默认走同一个 AI 网关域名，由网关按 path 前缀分发到各业务 LB，
 // 前端路径代码无需改变。GV / CDN 动态网关不在迁移范围，维持各自直连。
@@ -410,9 +448,15 @@ function computeAppSign(
   url: string,
   body: unknown,
   signHeaders: Record<string, string>,
+  /** 如果 BW_SERVICE_URL 带了路径前缀（如 AI 网关 /web3-business-wallet 或 ingress 代理），
+   * 签名前需要剥掉，让 path 与 BW 服务端实际看到的"裸 path"对齐。 */
+  basePathToStrip?: string,
 ): string {
   const u = new URL(url);
-  const path = u.pathname;
+  let path = u.pathname;
+  if (basePathToStrip && path.startsWith(basePathToStrip)) {
+    path = path.slice(basePathToStrip.length) || "/";
+  }
 
   // Query string (sorted, lowercase keys)
   let searchParamsStr = "";
@@ -491,6 +535,9 @@ export class BwApiClient {
 
   private allHeaders(method: string, url: string, body: unknown): Record<string, string> {
     const signHeaders = this.buildSignHeaders();
+    // 剥掉 baseUrl 的路径前缀（如 /web3-business-wallet 或 /api/web/v1/web3-business-wallet），
+    // 让签名 path 与 BW 服务端实际接收到的裸 path 对齐（AI 网关会按前缀路由并剥掉前缀转发）。
+    const basePath = new URL(this.baseUrl).pathname.replace(/\/+$/, "");
     const appsign = computeAppSign(
       this.appKey,
       this.appSecret,
@@ -498,6 +545,7 @@ export class BwApiClient {
       url,
       body,
       signHeaders,
+      basePath || undefined,
     );
     return {
       ...signHeaders,
