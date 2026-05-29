@@ -58,6 +58,7 @@ let envVars = {};
 if (bakeEnv) {
   if (existsSync(envFilePath)) {
     const raw = readFileSync(envFilePath, "utf-8");
+    let skipped = 0;
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
@@ -65,9 +66,15 @@ if (bakeEnv) {
       if (eqIdx === -1) continue;
       const key = trimmed.slice(0, eqIdx).trim();
       const value = trimmed.slice(eqIdx + 1).trim();
+      // 跳过空值：避免烤进二进制后在 runtime 用空字符串覆盖 process.env，
+      // 触发 `process.env.X ?? default` 拿到空串导致 fetch URL invalid 等问题。
+      if (value === "") {
+        skipped++;
+        continue;
+      }
       envVars[key] = value;
     }
-    console.log(`[env] Baking ${Object.keys(envVars).length} vars from ${envFilePath}`);
+    console.log(`[env] Baking ${Object.keys(envVars).length} vars from ${envFilePath}${skipped ? ` (skipped ${skipped} empty)` : ""}`);
     for (const [k, v] of Object.entries(envVars)) {
       console.log(`      ${k}=${v}`);
     }

@@ -224,7 +224,7 @@ export async function swapPrepare(
     extra_data: { is_multi: true },
   };
 
-  const swap = createSwapApiClient();
+  const swap = createSwapApiClient(input.mcp_token);
   const quoteRaw = await swap.quote(quoteReq);
 
   const { fields: quoteFields, snapshot } = parseSwapQuote(quoteRaw, input.slippage);
@@ -329,7 +329,7 @@ export async function swapPrepare(
 // ── Rebuild (used after approve signing / solana sign stage) ─────
 
 async function rebuildBuildResp(session: SwapSessionState): Promise<BuildV3Resp> {
-  const swap = createSwapApiClient();
+  const swap = createSwapApiClient(session.mcp_token);
   const gw = createGatewayApiClient(session.mcp_token);
 
   let priorityFeePerCu: string | undefined;
@@ -768,7 +768,7 @@ export async function swapSubmit(
     submitReq.signedApproveTxString = JSON.stringify([session.signed_approve_tx]);
   }
 
-  const swap = createSwapApiClient();
+  const swap = createSwapApiClient(session.mcp_token);
   const submitResp = (await swap.submit(submitReq)) as {
     txHash?: string;
     txOrderId?: string;
